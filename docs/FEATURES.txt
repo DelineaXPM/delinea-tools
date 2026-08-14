@@ -1,0 +1,187 @@
+delinea-tools — FEATURES
+========================
+
+One Go module for authenticating to Delinea Secret Server (on-prem and cloud)
+and the Delinea Platform and fetching secrets. It ships as a command-line tool
+(delinea-util) and as two embeddable libraries (the api and secrets packages).
+It imports only the Go standard library.
+
+
+TARGETS AND AUTHENTICATION
+--------------------------
+
+  - One credential model for both products: Secret Server (username/password,
+    optional AD domain) and the Delinea Platform (OAuth client_id/client_secret).
+  - Target inference: the grant style is chosen from which credential pair is
+    set, or named explicitly with --target ss|platform.
+  - Probe-driven target selection: Config.WithProbedTarget resolves an unset
+    target with one credential-free health probe, for the single-credential-pair
+    integration shape.
+  - Pre-obtained bearer tokens are accepted directly, skipping the grant.
+  - Interactive MFA login (delinea-util token --interactive): walks the Platform
+    Identity API (password plus whatever second factor the account offers -- an
+    out-of-band challenge such as an emailed link or code, SMS, or push, or an
+    authenticator/OTP code) for MFA-gated accounts that cannot use the password
+    grant. Redirect-based federated/SSO login is refused, not partially
+    supported.
+  - Secret Server Cloud tenant URLs are built from tenant+TLD by api.CloudURL.
+
+
+THE CLI (delinea-util)
+---------------------
+
+  - Curl-style raw REST access: "delinea-util METHOD PATH" performs one
+    authenticated call against any Secret Server or Platform endpoint and streams
+    the response body to stdout.
+  - Verbs: METHOD PATH, token (--interactive for MFA login), check, and the
+    secrets subcommand group (run, print, template).
+  - Request options: -d BODY (or @file, @-), -H headers, -i/--include (status
+    and headers), -v/--verbose (request/response summary on stderr).
+  - Platform vault routing: --vault discovers the default vault through the
+    broker and sends the request there; --vault-id targets a specific vault.
+  - Self-documenting: help, --readme, --tree, --version.
+  - Predictable exit codes shared across the raw verbs, the secrets group, and
+    check:
+        0  success (HTTP 2xx, or a clean check)
+        1  usage or configuration error
+        2  authentication or vault discovery failed
+        3  transport error (DNS, TLS, timeout)
+        4  the HTTP call completed with a non-2xx status
+
+
+SECRET RETRIEVAL AND DELIVERY (secrets group)
+---------------------------------------------
+
+  - run:      fetch secrets and exec a command with them injected. On Unix the
+              CLI exec-replaces itself with the child, so nothing of it lingers
+              (a stdin payload too large to prebuffer ahead of exec — over
+              ~60KB — is streamed by a supervising parent instead); on Windows
+              it supervises the child and propagates its exit code.
+  - print:    fetch and write to stdout, or to --out FILE (mode 0600, written
+              only on success).
+  - template: render a Go text/template file with secret values substituted.
+  - Mapping syntax: NAME=field#id or NAME=field@\folder\path; PREFIX_*=#id
+    expands every field of a secret into PREFIX_<SLUG> variables.
+  - Delivery modes (--via): env, stdin, and sh for run; stdin, sh, json, raw,
+    and github-env for print.
+  - File-field (attachment) content is downloaded and substituted transparently;
+    per-secret fan-out is capped by count and total bytes.
+  - Collision safety: two mappings that would define the same variable are
+    refused before delivery.
+
+
+DIAGNOSTICS (check)
+-------------------
+
+  - Whole-tool diagnosis: reports what is configured, reachable, and resolvable
+    with read-only requests that never expose a secret value.
+  - Validates the credential by authenticating against the probe-selected
+    backend; --no-auth runs configuration and reachability only (no grant, so no
+    lockout risk).
+  - Resolves each mapping (names and value lengths only) so a pipeline can verify
+    its references before trusting them.
+  - --json and --quiet output modes for automation.
+
+
+THE GO LIBRARIES
+----------------
+
+  - api: the raw authenticated client. Config + Client with Do(ctx, Request)
+    reaches any endpoint; handles the grant, token lifecycle, TLS, vault routing,
+    and redaction. Also DoBufferedResponse, Authenticate, VaultURL, CloudURL,
+    NormalizeURL, ProbeBackend, and a TokenCache interface with NewMemoryCache.
+  - secrets: resolves field references into ordered name/value pairs over an api
+    client. Resolve, Verify (names and lengths, never values), Secret,
+    SecretByPath; a Fetcher interface and NewWithClient/NewWithFetcher seams.
+  - secrets/secretstest: a map-backed Fetcher stub for consumer tests, encoding
+    the real server's semantics (missing and denied both return ErrAccessDenied).
+  - secrets/ciout: CI output formatters — Shell (export lines), GitHubEnv
+    ($GITHUB_ENV heredocs), GitHubMask (::add-mask:: per line).
+  - secrets/retrievejson: one strict parser for the shared CI retrieve-secrets
+    JSON schema ([{secretId|secretPath, secretKey, outputVariable}]).
+  - Sentinel errors matched with errors.Is: ErrConfig, ErrAuth, ErrAccessDenied,
+    ErrVault, ErrTransport, ErrTimeout (api); ErrNotFound, ErrAccessDenied,
+    ErrTransport, ErrTimeout (secrets).
+
+
+SECURITY PROPERTIES
+-------------------
+
+  - The secret is never a command-line argument, tool-wide. Passwords, client
+    secrets, and bearer tokens come only from the environment or stdin — argv is
+    world-readable and leaks into shell history and CI logs.
+  - Bearer-token redaction is unconditional: every accepted token is redacted
+    from diagnostics regardless of length. Passwords and client secrets redact
+    at 8+ bytes in diagnostics — a short dictionary-word credential would
+    otherwise rewrite ordinary words in legitimate output — and at any length
+    on the interactive-login error path.
+  - Config never formats a credential: the fmt verbs and json.Marshal render
+    Password/ClientSecret/Token as [REDACTED] (empty stays empty), and a URL's
+    userinfo/query/fragment are hidden — even when a struct embeds a Config.
+  - Nothing is written to disk unless asked; --out files are mode 0600 and only
+    on success, symlinks refused.
+  - TLS trust is per-client: CACert and SkipTLSVerify never mutate
+    http.DefaultTransport, so other HTTPS in the process is unaffected; TLS-trust
+    settings scope the token cache; cross-origin redirects on grants are refused.
+  - Vault-broker URLs are treated as untrusted input: HTTPS only, no userinfo,
+    host must be same-origin, on the Delinea cloud-domain allowlist, or
+    explicitly permitted.
+  - Log output (Config.Logger) and error diagnostics carry metadata only —
+    never a credential, a body, or a URL query string.
+
+
+CI/CD INTEGRATION
+-----------------
+
+  - GitHub Actions: "secrets print --via github-env --out $GITHUB_ENV" writes the
+    variables and emits ::add-mask:: for every secret line to stdout first, so
+    the runner masks the values before anything can echo them.
+  - GitLab CI: fetch secrets in the consuming job with "secrets run" or "--via sh"
+    into eval. (There is deliberately no artifact-based delivery: a GitLab dotenv
+    report is uploaded to the server and readable by pipeline users.)
+  - Shared, tested output and parsing layers (ciout, retrievejson) so an
+    integration is a thin wrapper, not a hand-rolled copy where quoting bugs
+    become security bugs.
+
+
+TOKEN LIFECYCLE AND PERFORMANCE
+-------------------------------
+
+  - A password/client-secret grant is expensive (an extra round-trip plus the
+    server's deliberately slow password hash); presenting a token is cheap. The
+    tool grants once and reuses the token.
+  - Per-client memoization: one client reuses its own token across every call it
+    makes, including a paged command walking many pages on one grant.
+  - Process-wide default cache: clients built without a Cache share one in-memory
+    cache, so a service constructing a client per operation still grants once per
+    identity. Keyed by URL, target, identity, and a credential digest (folding in
+    headers and TLS trust); memory-only, never persisted.
+  - Cross-client grant coalescing: clients sharing a cache coalesce concurrent
+    grants per credential, so a burst of parallel first-time calls costs one
+    grant — and one failed attempt — rather than one per caller racing the
+    account toward lockout.
+  - A 401 on a cached token evicts it and replays on a fresh grant.
+  - The one-shot CLI opts out of the shared cache (it never reads it); a
+    long-lived embedding service keeps it (the default).
+
+
+PORTABILITY AND DEPENDENCIES
+----------------------------
+
+  - Zero third-party dependencies — the Go standard library only.
+  - Runs on Linux, macOS, and Windows; the per-OS execution model (Unix
+    exec-replace vs Windows supervision, PowerShell vs POSIX syntax, stdin
+    re-encoding) is documented where it matters.
+
+
+TESTING
+-------
+
+  - The default suite is fully offline (no credentials, no network).
+  - A live end-to-end suite (build tag e2e) runs against real tenants, with a
+    strict mode (DELINEA_TOOLS_TEST_REQUIRE_E2E) that fails rather than skips when a
+    fixture is missing; its fixtures and coverage are documented in
+    docs/E2E.txt.
+  - CI runs the race suite on Linux, macOS, and Windows, an 88% coverage floor,
+    and a scheduled quality workflow (ten shuffled passes, fuzz sessions for
+    every fuzz target).

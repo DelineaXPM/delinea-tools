@@ -1,0 +1,116 @@
+delinea-util end-to-end tests
+============================
+
+The default suite (go test ./...) is fully offline and deterministic. Live
+tests are built only with the e2e tag:
+
+  go test -tags e2e ./...
+
+By default, each live test skips when its fixtures are absent. Set
+DELINEA_TOOLS_TEST_REQUIRE_E2E=1 (or run make e2e-strict) to make every required
+fixture absence fail; the scheduled workflow uses this mode so missing
+repository secrets cannot turn a green run into an empty run. The strict suite
+requires every fixture listed below, including its dedicated attachment secrets.
+
+The tests never print secret values: assertions compare lengths, status codes,
+or a configured SHA-256 digest. Point the fixtures at throwaway test objects,
+not production ones. In CI, set them as masked secret variables.
+
+The live tests span the whole module:
+  - api/e2e_test.go              the token engine and raw REST calls
+  - secrets/e2e_test.go          the secrets library (New + Resolve; Verify
+                                 is exercised live through the CLI's check)
+  - cmd/delinea-util/e2e_test.go  the built CLI's raw verbs and check
+  - cmd/delinea-util/secretscmd/e2e_test.go  the built CLI's "secrets" group
+                                 (print --via raw, template, run/exec injection)
+
+All four share one fixture set, keyed by target.
+
+SECRET SERVER FIXTURES
+----------------------
+
+  DELINEA_TOOLS_TEST_SS_URL          base URL of a Secret Server or SSC tenant
+  DELINEA_TOOLS_TEST_SS_USERNAME     local user with API access
+  DELINEA_TOOLS_TEST_SS_PASSWORD     its password
+  DELINEA_TOOLS_TEST_SS_SECRET_ID    numeric id of a secret to read
+  DELINEA_TOOLS_TEST_SS_SECRET_PATH  folder path of that same secret, backslash
+                                   delimited with a leading backslash, exactly as
+                                   /api/v1/folders/<id> reports it in folderPath,
+                                   followed by the secret's name — for example
+                                   \ci\database\prod. Required by the strict suite;
+                                   local runs skip the path cases without it
+  DELINEA_TOOLS_TEST_SS_SECRET_FIELD field slug to read
+  DELINEA_TOOLS_TEST_SS_SECRET_VALUE expected value of that field (the assertion)
+  DELINEA_TOOLS_TEST_SS_FOLDER_ID    folder the user can create secrets in (write test)
+  DELINEA_TOOLS_TEST_SS_TEMPLATE_ID  secret template for the write test
+  DELINEA_TOOLS_TEST_SS_SITE_ID      site id for the write test (usually 1)
+
+Attachment fixtures:
+
+  DELINEA_TOOLS_TEST_SS_FILE_SECRET_ID     id of a secret with a file field
+  DELINEA_TOOLS_TEST_SS_FILE_SECRET_FIELD  slug of that file field
+  DELINEA_TOOLS_TEST_SS_FILE_SHA256        hexadecimal SHA-256 of its downloaded bytes
+
+Exercised: backend probing and target inference; the password grant;
+GET /api/v1/users/current through the library and the CLI; non-2xx exit-code
+behavior; token reuse via DELINEA_TOOLS_TOKEN; validation of a pre-obtained token;
+a wrong-password grant rejection; authenticated and reachability-only check;
+the secrets library and built "secrets" CLI resolving the fixture by id and
+@path and injecting it into a run child; a full write cycle (the template is
+fetched, every required non-file field is filled with a generated value, the
+secret is created with POST and then deleted); and an attachment fixture that
+verifies the eager file download byte-for-byte via SHA-256.
+
+PLATFORM FIXTURES
+-----------------
+
+  DELINEA_TOOLS_TEST_PLATFORM_URL            platform tenant URL
+  DELINEA_TOOLS_TEST_PLATFORM_CLIENT_ID      service-identity client_id
+  DELINEA_TOOLS_TEST_PLATFORM_CLIENT_SECRET  its client_secret
+  DELINEA_TOOLS_TEST_PLATFORM_SECRET_ID      id of a secret readable via the vault
+  DELINEA_TOOLS_TEST_PLATFORM_SECRET_PATH    folder path of that same secret (see the
+                                           Secret Server note above)
+  DELINEA_TOOLS_TEST_PLATFORM_SECRET_FIELD   field slug to read
+  DELINEA_TOOLS_TEST_PLATFORM_SECRET_VALUE   expected value of that field (the assertion)
+  DELINEA_TOOLS_TEST_PLATFORM_FOLDER_ID      vault folder the identity owns (write test)
+
+Attachment and secret-write fixtures:
+
+  DELINEA_TOOLS_TEST_PLATFORM_FILE_SECRET_ID     id of a secret with a file field
+  DELINEA_TOOLS_TEST_PLATFORM_FILE_SECRET_FIELD  slug of that file field
+  DELINEA_TOOLS_TEST_PLATFORM_FILE_SHA256        hexadecimal SHA-256 of its downloaded bytes
+  DELINEA_TOOLS_TEST_PLATFORM_TEMPLATE_ID        vault secret template for create/delete
+  DELINEA_TOOLS_TEST_PLATFORM_SITE_ID            vault site id for create/delete (usually 1)
+
+Exercised: backend probing and target inference; the client-credentials grant;
+pre-obtained-token validation and reuse; vault discovery via the broker;
+--vault routing of GET /api/v1/secrets/<id> to the discovered vault;
+authenticated and reachability-only check; the secrets library and built
+"secrets" CLI resolving the fixture through the vault; and creating and
+deleting a subfolder through --vault. The additional fixtures cover an attachment
+download and a complete vault secret create/delete cycle. The Platform suites
+set DELINEA_TOOLS_TARGET=platform themselves; the fixtures only carry the tenant
+URL and client credentials.
+
+The _PATH fixtures must name the same secret as the corresponding _ID fixture,
+so both resolve to the same _VALUE. That is deliberate: it asserts the two
+reference forms agree, and needs no second expected value.
+
+Example (Platform):
+
+  export DELINEA_TOOLS_TEST_PLATFORM_URL=https://<tenant>.delinea.app
+  export DELINEA_TOOLS_TEST_PLATFORM_CLIENT_ID=<client-id>
+  export DELINEA_TOOLS_TEST_PLATFORM_CLIENT_SECRET=<client-secret>
+  export DELINEA_TOOLS_TEST_PLATFORM_SECRET_ID=1
+  export DELINEA_TOOLS_TEST_PLATFORM_SECRET_PATH='\folder\Secret Name'
+  export DELINEA_TOOLS_TEST_PLATFORM_SECRET_FIELD=Password
+  export DELINEA_TOOLS_TEST_PLATFORM_SECRET_VALUE=<expected-value>
+  go test -tags e2e ./...
+
+NOT COVERED / CACHE
+-------------------
+
+The interactive login flow (delinea-util token --interactive) is not covered by e2e: its
+out-of-band challenge needs a human with a mailbox. Its state machine is
+covered by offline unit tests against a fake Identity API. The token-cache
+tests use an in-memory cache; nothing is written to disk.
