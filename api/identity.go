@@ -152,7 +152,9 @@ func (c *Client) InteractiveLogin(ctx context.Context, prompt Prompter) (string,
 			}
 			challenges, i = adv.Challenges, -1
 		default:
-			return "", fmt.Errorf("%w: unexpected authentication summary %q", ErrAuth, c.authSnippet([]byte(adv.Summary), submittedAnswers...))
+			sensitive := append([]string(nil), submittedAnswers...)
+			sensitive = append(sensitive, adv.OAuthTokens.AccessToken)
+			return "", fmt.Errorf("%w: unexpected authentication summary %q", ErrAuth, c.authSnippet([]byte(adv.Summary), sensitive...))
 		}
 	}
 	return "", fmt.Errorf("%w: authentication completed every challenge without a token", ErrAuth)
@@ -311,12 +313,12 @@ func (c *Client) identityPost(ctx context.Context, path string, body, out any, p
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := c.hc.Do(req)
 	if err != nil {
-		return c.transportErrorClassifier(1, nil, sensitive...)(fmt.Errorf("identity request: %w", err))
+		return c.transportErrorClassifier("identity request", 1, nil, sensitive...)(fmt.Errorf("identity request: %w", err))
 	}
 	defer resp.Body.Close()
 	raw, oversized, err := readAuthResponse(resp.Body)
 	if err != nil {
-		return c.transportErrorClassifier(1, nil, sensitive...)(fmt.Errorf("reading identity response: %w", err))
+		return c.transportErrorClassifier("reading identity response", 1, nil, sensitive...)(fmt.Errorf("reading identity response: %w", err))
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		// A 3xx (identity posts never follow redirects) means the URL points

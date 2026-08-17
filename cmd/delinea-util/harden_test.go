@@ -11,15 +11,52 @@ import (
 // The verbose (-v) summary is server-controlled and reaches a terminal, so its
 // status line and header values must be sanitized.
 func TestFprintResponseSummarySanitizes(t *testing.T) {
+	const (
+		token            = "configured-token-value"
+		configuredSecret = "configured-header-secret"
+		requestSecret    = "request-header-secret"
+	)
+	_, resp := newDiagnosticResponse(t, token,
+		http.Header{"X-Configured-Key": {configuredSecret}},
+		http.Header{"X-Request-Key": {requestSecret}},
+	)
+	resp.Proto = "HTTP/1.1 " + token
+	resp.Status = "500 O\x1bK " + requestSecret
+	resp.Header = http.Header{
+		"X-\x1bEvil-" + configuredSecret: {"a\x1b[31mb " + token + " " + requestSecret},
+	}
 	var b strings.Builder
-	h := http.Header{"X-\x1bEvil": {"a\x1b[31mb"}}
-	fprintResponseSummary(&b, "HTTP/1.1", "200 O\x1bK", h)
+	fprintResponseSummary(&b, resp)
 	out := b.String()
 	if strings.ContainsRune(out, '\x1b') {
 		t.Errorf("escape survived sanitization: %q", out)
 	}
 	if !strings.Contains(out, "X-?Evil") {
 		t.Errorf("header name dropped: %q", out)
+	}
+	for _, secret := range []string{token, configuredSecret, requestSecret} {
+		if strings.Contains(out, secret) {
+			t.Errorf("response diagnostic leaked %q: %q", secret, out)
+		}
+	}
+	if !strings.Contains(out, "[REDACTED]") {
+		t.Errorf("response diagnostic did not mark redacted fields: %q", out)
+	}
+	status := responseDiagnosticText(resp, resp.Status)
+	if strings.Contains(status, requestSecret) || strings.ContainsRune(status, '\x1b') {
+		t.Errorf("non-2xx status diagnostic was not safe: %q", status)
+	}
+}
+
+func TestRequestDiagnosticPathDropsQueryAndRedacts(t *testing.T) {
+	const token = "configured-token-value"
+	client, _ := newDiagnosticResponse(t, token, nil, nil)
+	out := requestDiagnosticPath(client, "/api/"+token+"\x1b[31m?password=query-secret#fragment-secret")
+	if strings.Contains(out, token) || strings.Contains(out, "query-secret") || strings.Contains(out, "fragment-secret") {
+		t.Errorf("request diagnostic leaked credential-bearing URL data: %q", out)
+	}
+	if strings.ContainsRune(out, '\x1b') || !strings.Contains(out, "[REDACTED]") {
+		t.Errorf("request diagnostic was not redacted and sanitized: %q", out)
 	}
 }
 

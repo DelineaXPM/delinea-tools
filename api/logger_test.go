@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 type logBuffer struct {
@@ -36,6 +37,11 @@ func debugLogger() (*slog.Logger, *logBuffer) {
 	return slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})), buf
 }
 
+type closeErrorBody struct{ err error }
+
+func (b closeErrorBody) Read([]byte) (int, error) { return 0, io.EOF }
+func (b closeErrorBody) Close() error             { return b.err }
+
 func TestLoggerReportsGrantAndRetry(t *testing.T) {
 	calls := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -59,7 +65,7 @@ func TestLoggerReportsGrantAndRetry(t *testing.T) {
 		t.Fatal(err)
 	}
 	resp, err := c.Do(context.Background(), Request{Method: http.MethodGet,
-		Path: "/api/v1/things?filter.searchText=query-is-caller-data"})
+		Path: "/api/v1/granted-token#fragment-is-caller-data"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +81,7 @@ func TestLoggerReportsGrantAndRetry(t *testing.T) {
 	if !strings.Contains(out, "retrying request") || !strings.Contains(out, "status=503") {
 		t.Errorf("retry not logged with its status:\n%s", out)
 	}
-	for _, secret := range []string{"hunter2-pw", "granted-token", "query-is-caller-data"} {
+	for _, secret := range []string{"hunter2-pw", "granted-token", "fragment-is-caller-data"} {
 		if strings.Contains(out, secret) {
 			t.Errorf("log leaked %q:\n%s", secret, out)
 		}
@@ -113,14 +119,21 @@ func TestTransportFailureRedactsOutboundCredentials(t *testing.T) {
 		const token = "configured-bearer-token"
 		const configuredHeader = "gateway-header-secret"
 		const requestHeader = "request-header-secret"
+		const requestBody = "api-request-body-secret"
 		cause := errors.New("transport cause")
 		rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
-			return nil, fmt.Errorf("%w: auth=%s gateway=%s request=%s", cause,
-				r.Header.Get("Authorization"), r.Header.Get("X-Gateway-Key"), r.Header.Get("X-Request-Key"))
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				return nil, err
+			}
+			return nil, fmt.Errorf("%w: auth=%s gateway=%s request=%s body=%s", cause,
+				r.Header.Get("Authorization"), r.Header.Get("X-Gateway-Key"), r.Header.Get("X-Request-Key"), body)
 		})
+		logger, buf := debugLogger()
 		c, err := New(Config{
-			URL: "https://vault.example.com", Token: token, Transport: rt, Retries: 1,
-			Header: http.Header{"X-Gateway-Key": {configuredHeader}},
+			URL: "https://vault.example.com", Token: token, Transport: rt, Logger: logger, Retries: 2,
+			Header:  http.Header{"X-Gateway-Key": {configuredHeader}},
+			Backoff: func(int) time.Duration { return 0 },
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -129,13 +142,17 @@ func TestTransportFailureRedactsOutboundCredentials(t *testing.T) {
 			Method: http.MethodGet,
 			Path:   "/api/v1/things",
 			Header: http.Header{"X-Request-Key": {requestHeader}},
+			Body:   strings.NewReader(requestBody),
 		})
 		if !errors.Is(err, cause) {
 			t.Fatalf("got %v, want original transport cause in the unwrap chain", err)
 		}
-		for _, secret := range []string{token, configuredHeader, requestHeader} {
+		for _, secret := range []string{token, configuredHeader, requestHeader, requestBody} {
 			if strings.Contains(err.Error(), secret) {
 				t.Errorf("transport diagnostic exposed %q: %v", secret, err)
+			}
+			if strings.Contains(buf.String(), secret) {
+				t.Errorf("retry log exposed %q:\n%s", secret, buf.String())
 			}
 		}
 	})
@@ -165,18 +182,24 @@ func TestTransportFailureRedactsOutboundCredentials(t *testing.T) {
 		if strings.Contains(err.Error(), password) {
 			t.Errorf("grant transport diagnostic exposed the password: %v", err)
 		}
-		if out := buf.String(); strings.Contains(out, password) {
-			t.Errorf("grant failure log exposed the password:\n%s", out)
+		for _, bodyPart := range []string{password, "grant_type=password", "password="} {
+			if strings.Contains(err.Error(), bodyPart) {
+				t.Errorf("grant transport diagnostic exposed request-body content %q: %v", bodyPart, err)
+			}
+			if out := buf.String(); strings.Contains(out, bodyPart) {
+				t.Errorf("grant failure log exposed request-body content %q:\n%s", bodyPart, out)
+			}
 		}
 	})
 
 	t.Run("response body read", func(t *testing.T) {
 		const token = "stream-bearer-token"
 		const requestHeader = "stream-header-secret"
+		const responseBody = "response-body-must-not-leak"
 		cause := errors.New("stream transport cause")
 		rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
-			bodyErr := fmt.Errorf("%w: auth=%s request=%s", cause,
-				r.Header.Get("Authorization"), r.Header.Get("X-Request-Key"))
+			bodyErr := fmt.Errorf("%w: auth=%s request=%s body=%s", cause,
+				r.Header.Get("Authorization"), r.Header.Get("X-Request-Key"), responseBody)
 			return &http.Response{
 				StatusCode: http.StatusOK,
 				Status:     "200 OK",
@@ -203,10 +226,83 @@ func TestTransportFailureRedactsOutboundCredentials(t *testing.T) {
 		if !errors.Is(err, cause) {
 			t.Fatalf("got %v, want original body-read cause in the unwrap chain", err)
 		}
-		for _, secret := range []string{token, requestHeader} {
+		for _, secret := range []string{token, requestHeader, responseBody} {
 			if strings.Contains(err.Error(), secret) {
 				t.Errorf("body-read diagnostic exposed %q: %v", secret, err)
 			}
+		}
+	})
+
+	t.Run("response body close", func(t *testing.T) {
+		const token = "close-bearer-token"
+		const requestHeader = "close-header-secret"
+		const responseBody = "close-response-body-must-not-leak"
+		cause := errors.New("close transport cause")
+		rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			closeErr := fmt.Errorf("%w: auth=%s request=%s body=%s", cause,
+				r.Header.Get("Authorization"), r.Header.Get("X-Request-Key"), responseBody)
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Status:     "200 OK",
+				Proto:      "HTTP/1.1",
+				Header:     http.Header{},
+				Body:       closeErrorBody{err: closeErr},
+				Request:    r,
+			}, nil
+		})
+		c, err := New(Config{URL: "https://vault.example.com", Token: token, Transport: rt})
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp, err := c.Do(context.Background(), Request{
+			Method: http.MethodGet,
+			Path:   "/api/v1/things",
+			Header: http.Header{"X-Request-Key": {requestHeader}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = resp.Body.Close()
+		if !errors.Is(err, cause) {
+			t.Fatalf("got %v, want original body-close cause in the unwrap chain", err)
+		}
+		for _, secret := range []string{token, requestHeader, responseBody} {
+			if strings.Contains(err.Error(), secret) {
+				t.Errorf("body-close diagnostic exposed %q: %v", secret, err)
+			}
+		}
+	})
+
+	t.Run("buffered response body retry", func(t *testing.T) {
+		const responseBody = "buffered-response-body-must-not-leak"
+		cause := errors.New("buffered stream transport cause")
+		rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Status:     "200 OK",
+				Proto:      "HTTP/1.1",
+				Header:     http.Header{},
+				Body:       io.NopCloser(errorReader{err: fmt.Errorf("%w: body=%s", cause, responseBody)}),
+				Request:    r,
+			}, nil
+		})
+		logger, buf := debugLogger()
+		c, err := New(Config{
+			URL: "https://vault.example.com", Token: "configured-bearer-token", Transport: rt,
+			Logger: logger, Retries: 2, Backoff: func(int) time.Duration { return 0 },
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = c.DoBufferedResponse(context.Background(), Request{Method: http.MethodGet, Path: "/api/v1/things"}, 1024)
+		if !errors.Is(err, cause) {
+			t.Fatalf("got %v, want original body-read cause in the unwrap chain", err)
+		}
+		if strings.Contains(err.Error(), responseBody) {
+			t.Errorf("buffered body-read diagnostic exposed response content: %v", err)
+		}
+		if out := buf.String(); strings.Contains(out, responseBody) {
+			t.Errorf("buffered body-read retry log exposed response content:\n%s", out)
 		}
 	})
 }
@@ -237,21 +333,30 @@ func TestLoggerReportsGrantFailureWithoutCredentials(t *testing.T) {
 }
 
 func TestLoggerReportsVaultSelection(t *testing.T) {
+	const (
+		platformToken = "platform-token"
+		clientSecret  = "client-secret-value"
+		gatewaySecret = "gateway-secret-value"
+	)
 	var vaultHost string
 	mux := http.NewServeMux()
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 	mux.HandleFunc("/identity/api/oauth2/token/xpmplatform", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, grantJSON("platform-token"))
+		fmt.Fprint(w, grantJSON(platformToken))
 	})
 	mux.HandleFunc("/vaultbroker/api/vaults", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprintf(w, `{"vaults":[{"vaultId":"v-1","name":"Primary","isDefault":true,"isActive":true,"connection":{"url":"https://%s"}}]}`, vaultHost)
+		fmt.Fprintf(w, `{"vaults":[{"vaultId":"v-%s","name":"Primary %s %s","isDefault":true,"isActive":true,"connection":{"url":"https://%s"}}]}`,
+			platformToken, clientSecret, gatewaySecret, vaultHost)
 	})
 	vaultHost = strings.TrimPrefix(srv.URL, "http://")
 
 	logger, buf := debugLogger()
-	c, err := New(Config{URL: srv.URL, Target: TargetPlatform, ClientID: "ci", ClientSecret: "cs-secret",
-		Logger: logger, DisableCache: true, AllowedVaultHosts: []string{vaultHost}})
+	c, err := New(Config{
+		URL: srv.URL, Target: TargetPlatform, ClientID: "ci", ClientSecret: clientSecret,
+		Header: http.Header{"X-Gateway-Key": {gatewaySecret}}, Logger: logger,
+		DisableCache: true, AllowedVaultHosts: []string{vaultHost},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -259,11 +364,13 @@ func TestLoggerReportsVaultSelection(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := buf.String()
-	if !strings.Contains(out, "vault selected") || !strings.Contains(out, "vault_id=v-1") {
+	if !strings.Contains(out, "vault selected") || !strings.Contains(out, "[REDACTED]") {
 		t.Errorf("vault selection not logged:\n%s", out)
 	}
-	if strings.Contains(out, "cs-secret") || strings.Contains(out, "platform-token") {
-		t.Errorf("log leaked a credential:\n%s", out)
+	for _, secret := range []string{clientSecret, platformToken, gatewaySecret} {
+		if strings.Contains(out, secret) {
+			t.Errorf("log leaked credential %q:\n%s", secret, out)
+		}
 	}
 }
 

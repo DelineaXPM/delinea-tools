@@ -113,6 +113,25 @@ func TestNewHandlesNonComparableInitialDefaultTransport(t *testing.T) {
 	}
 }
 
+func TestNewIgnoresInPlaceDefaultTransportMutation(t *testing.T) {
+	dt, ok := http.DefaultTransport.(*http.Transport)
+	if !ok || initialDefaultHTTPTransport == nil {
+		t.Skip("package did not initialize under the standard HTTP transport")
+	}
+	original := dt.MaxIdleConns
+	t.Cleanup(func() { dt.MaxIdleConns = original })
+	dt.MaxIdleConns = initialDefaultHTTPTransport.MaxIdleConns + 123
+
+	c, err := New(Config{URL: "https://vault.example.com", Token: "test-token", DisableCache: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := c.hc.Transport.(*http.Transport).MaxIdleConns
+	if want := initialDefaultHTTPTransport.MaxIdleConns; got != want {
+		t.Errorf("client cloned mutated http.DefaultTransport: got MaxIdleConns %d, want startup value %d", got, want)
+	}
+}
+
 func TestConfiguredTokenIgnoresStaleGrantIdentity(t *testing.T) {
 	ft := &fakeTransport{}
 	c, err := New(Config{
@@ -1643,10 +1662,15 @@ func TestReadRequestBodySuccessDoesNotTakeOwnership(t *testing.T) {
 }
 
 func TestReadRequestBodyReportsReadError(t *testing.T) {
-	want := errors.New("body failed")
-	_, err := readRequestBody(context.Background(), failingBodyReader{err: want})
+	const bodySecret = "request-body-content-must-not-leak"
+	want := errors.New("body read cause")
+	bodyErr := fmt.Errorf("%w: buffered bytes=%s", want, bodySecret)
+	_, err := readRequestBody(context.Background(), failingBodyReader{err: bodyErr})
 	if !errors.Is(err, want) || !strings.Contains(err.Error(), "reading request body") {
 		t.Fatalf("got %v, want a wrapped body read error", err)
+	}
+	if strings.Contains(err.Error(), bodySecret) {
+		t.Errorf("request-body read diagnostic exposed body content: %v", err)
 	}
 }
 

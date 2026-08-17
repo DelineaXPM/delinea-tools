@@ -523,12 +523,13 @@ func TestVaultURLCachesDifferentIDsIndependently(t *testing.T) {
 }
 
 func TestVaultURLRejectsUntrustedHost(t *testing.T) {
+	const token = "plat-tok"
 	platformSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/identity/api/oauth2/token/xpmplatform":
-			fmt.Fprint(w, grantJSON("plat-tok"))
+			fmt.Fprint(w, grantJSON(token))
 		case "/vaultbroker/api/vaults":
-			fmt.Fprint(w, `{"vaults":[{"vaultId":"1","isDefault":true,"isActive":true,"connection":{"url":"https://vault.evil.example.com"}}]}`)
+			fmt.Fprintf(w, `{"vaults":[{"vaultId":"1","isDefault":true,"isActive":true,"connection":{"url":"https://%s.evil.example.com"}}]}`, token)
 		}
 	}))
 	defer platformSrv.Close()
@@ -541,8 +542,8 @@ func TestVaultURLRejectsUntrustedHost(t *testing.T) {
 	if !errors.Is(err, ErrVault) {
 		t.Errorf("got %v, want errors.Is ErrVault", err)
 	}
-	if err == nil || !strings.Contains(err.Error(), "vault.evil.example.com") {
-		t.Errorf("error should name the untrusted host: %v", err)
+	if err == nil || strings.Contains(err.Error(), token) || !strings.Contains(err.Error(), "[REDACTED].evil.example.com") {
+		t.Errorf("error should redact credentials reflected in the untrusted host: %v", err)
 	}
 }
 

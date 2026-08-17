@@ -38,7 +38,7 @@ func ProbeBackend(ctx context.Context, cfg Config) (Backend, error) {
 	if err := validateHTTPHeaders(cfg.Header); err != nil {
 		return BackendUnknown, fmt.Errorf("%w: Config.Header: %v", ErrConfig, err)
 	}
-	client, cleanup, err := probeClient(cfg)
+	client, cleanup, opaque, err := probeClient(cfg)
 	if err != nil {
 		return BackendUnknown, err
 	}
@@ -76,7 +76,7 @@ func ProbeBackend(ctx context.Context, cfg Config) (Backend, error) {
 	// other network path uses, so WithProbedTarget honors the ErrTransport /
 	// ErrTimeout contract (and the URL sanitizer). firstErr is non-nil here:
 	// reachable stays false only when every probe returned an error.
-	return BackendUnknown, classifyProbeTransport(firstErr, cfg.Header)
+	return BackendUnknown, classifyProbeTransport(firstErr, cfg.Header, opaque)
 }
 
 // probeClient builds the same transport New would — proxy environment, TLS
@@ -87,10 +87,10 @@ func ProbeBackend(ctx context.Context, cfg Config) (Backend, error) {
 // credential-free SSRF oracle) or to a service that answers "Healthy" and
 // thereby flip the reported backend — which is what decides where the real
 // credential is later sent.
-func probeClient(cfg Config) (*http.Client, func(), error) {
+func probeClient(cfg Config) (*http.Client, func(), bool, error) {
 	tr, opaque, err := newTransport(cfg)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, false, err
 	}
 	client := &http.Client{
 		Transport:     tr,
@@ -101,9 +101,9 @@ func probeClient(cfg Config) (*http.Client, func(), error) {
 	// call owns. Close that clone's idle pool when the short probe is done, but
 	// never disturb a caller-supplied or process-wide opaque transport.
 	if !opaque {
-		return client, client.CloseIdleConnections, nil
+		return client, client.CloseIdleConnections, false, nil
 	}
-	return client, func() {}, nil
+	return client, func() {}, true, nil
 }
 
 // probeHealthy accepts a JSON object whose healthy field is true, or the exact
@@ -146,10 +146,13 @@ func recognizedHealthyBody(body []byte) bool {
 }
 
 // classifyProbeTransport preserves the engine's sentinel and underlying error
-// chain while removing configured routing-header values from the printable
-// diagnostic. A caller-supplied RoundTripper is arbitrary code and may echo a
-// request header in its returned error; probes deliberately send those headers.
-func classifyProbeTransport(err error, header http.Header) error {
+// chain. Errors from an opaque transport are suppressed in full because its
+// arbitrary code may derive them from headers or response bodies; otherwise
+// configured routing-header values are removed from the printable diagnostic.
+func classifyProbeTransport(err error, header http.Header, opaque bool) error {
+	if opaque {
+		return opaqueTransportDiagnostic("probing backend", err)
+	}
 	classified := classifyTransport(err)
 	values := make([]string, 0, len(header))
 	for _, vv := range header {

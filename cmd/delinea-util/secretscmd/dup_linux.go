@@ -9,6 +9,26 @@ import (
 
 // linux/arm64 has no dup2 syscall, so use dup3 everywhere on Linux.
 func dupToStdin(fd int) error {
+	if fd == 0 {
+		// os.Pipe marks both ends close-on-exec. When stdin was closed, its
+		// read end can already be fd 0; dup3 rejects equal descriptors, so clear
+		// the flag in place and retain this pipe as the exec'd child's stdin.
+		_, _, errno := syscall.Syscall(syscall.SYS_FCNTL, 0, syscall.F_SETFD, 0)
+		if errno != 0 {
+			return errno
+		}
+		return nil
+	}
+	return syscall.Dup3(fd, 0, 0)
+}
+
+func restoreStdin(fd int, wasOpen bool) error {
+	if !wasOpen {
+		if err := syscall.Close(0); err != syscall.EBADF {
+			return err
+		}
+		return nil
+	}
 	return syscall.Dup3(fd, 0, 0)
 }
 

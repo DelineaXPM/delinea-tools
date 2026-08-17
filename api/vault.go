@@ -54,19 +54,24 @@ type VaultConnection struct {
 // so transport failures, transient statuses (with Retry-After), and a body
 // read that dies after the headers are all retried on one budget.
 func (c *Client) Vaults(ctx context.Context) ([]Vault, error) {
+	vaults, _, err := c.vaults(ctx)
+	return vaults, err
+}
+
+func (c *Client) vaults(ctx context.Context) ([]Vault, *BufferedResponse, error) {
 	// Read one byte past the cap so an over-length inventory is reported as a
 	// size error rather than silently truncated and then misread as malformed
 	// JSON (the fetcher reads its own cap the same way).
 	resp, err := c.DoBufferedResponse(ctx, Request{Method: http.MethodGet, Path: vaultBrokerVaultsPath}, maxVaultResponseBytes+1)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	status, body := resp.StatusCode, resp.Body
 	// Status is classified before the size cap: a 401/403 or transient 5xx
 	// with an oversized (e.g. verbose WAF) body is an access or transport
 	// answer, not a size error.
 	if status == http.StatusUnauthorized || status == http.StatusForbidden {
-		return nil, fmt.Errorf("%w: vault broker returned %d", ErrAccessDenied, status)
+		return nil, nil, fmt.Errorf("%w: vault broker returned %d", ErrAccessDenied, status)
 	}
 	if status < 200 || status > 299 {
 		// DoBufferedResponse already retried the retriable statuses; one that persists
@@ -77,18 +82,18 @@ func (c *Client) Vaults(ctx context.Context) ([]Vault, error) {
 		if retriableStatus(status) {
 			kind = ErrTransport
 		}
-		return nil, fmt.Errorf("%w: vault broker returned %d: %s", kind, status, resp.DiagnosticSnippet())
+		return nil, nil, fmt.Errorf("%w: vault broker returned %d: %s", kind, status, resp.DiagnosticSnippet())
 	}
 	if len(body) > maxVaultResponseBytes {
-		return nil, fmt.Errorf("%w: vault broker inventory exceeds %d bytes", ErrVault, maxVaultResponseBytes)
+		return nil, nil, fmt.Errorf("%w: vault broker inventory exceeds %d bytes", ErrVault, maxVaultResponseBytes)
 	}
 	var vr struct {
 		Vaults []Vault `json:"vaults"`
 	}
 	if err := json.Unmarshal(body, &vr); err != nil {
-		return nil, fmt.Errorf("%w: parsing vault broker response: %v", ErrVault, err)
+		return nil, nil, fmt.Errorf("%w: parsing vault broker response: %v", ErrVault, err)
 	}
-	return vr.Vaults, nil
+	return vr.Vaults, resp, nil
 }
 
 // VaultURLByID discovers, validates, and memoizes the URL of a specific vault
@@ -187,9 +192,15 @@ func (c *Client) runVaultLookup(ctx context.Context, id string, lookup *inflight
 }
 
 func (c *Client) discoverVaultURL(ctx context.Context, id string) (*url.URL, error) {
-	vaults, err := c.Vaults(ctx)
+	vaults, resp, err := c.vaults(ctx)
 	if err != nil {
 		return nil, err
+	}
+	diagnostic := func(text string) string {
+		if text == "" {
+			return ""
+		}
+		return resp.diagnosticSnippet([]byte(text))
 	}
 	for _, v := range vaults {
 		switch {
@@ -202,9 +213,12 @@ func (c *Client) discoverVaultURL(ctx context.Context, id string) (*url.URL, err
 		}
 		vu, err := validateVaultURL(c.base, v.Connection.URL, c.cfg.AllowedVaultHosts)
 		if err != nil {
-			return nil, err
+			// Validation errors can include the broker-controlled host. Bind them
+			// to the exact request redactor before they reach a terminal or log.
+			detail := strings.TrimPrefix(err.Error(), ErrVault.Error()+": ")
+			return nil, fmt.Errorf("%w: %s", ErrVault, diagnostic(detail))
 		}
-		c.log.DebugContext(ctx, "vault selected", "vault_id", v.VaultID, "name", v.Name, "host", vu.Host)
+		c.log.DebugContext(ctx, "vault selected", "vault_id", diagnostic(v.VaultID), "name", diagnostic(v.Name), "host", diagnostic(vu.Host))
 		return vu, nil
 	}
 	if id == "" {

@@ -350,7 +350,7 @@ func TestProbeBackendRedactsConfiguredHeaderFromTransportError(t *testing.T) {
 	if !errors.Is(err, ErrTransport) {
 		t.Fatalf("got %v, want ErrTransport", err)
 	}
-	if strings.Contains(err.Error(), secret) || !strings.Contains(err.Error(), "[REDACTED]") {
+	if strings.Contains(err.Error(), secret) || !strings.Contains(err.Error(), "opaque transport details suppressed") {
 		t.Fatalf("probe transport diagnostic exposed configured header: %v", err)
 	}
 }

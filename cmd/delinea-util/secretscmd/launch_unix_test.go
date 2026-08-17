@@ -8,9 +8,12 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 )
 
 // TestLaunchHelperProcess is re-executed as a child by the launch tests below.
@@ -26,6 +29,55 @@ func TestLaunchHelperProcess(t *testing.T) {
 		_ = launch([]string{"printenv"}, append(os.Environ(), "INJECTED=hello"), nil)
 	case "stdin":
 		_ = launch([]string{"cat"}, os.Environ(), []byte("INJECTED=hello\x00"))
+	case "stdin-closed":
+		if err := syscall.Close(0); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(99)
+		}
+		if err := launch([]string{"cat"}, os.Environ(), []byte("INJECTED=hello\x00")); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(99)
+		}
+	case "stdin-exec-failure":
+		path := filepath.Join(t.TempDir(), "invalid-executable")
+		if err := os.WriteFile(path, []byte("not an executable format"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := launch([]string{path}, os.Environ(), []byte("secret-payload")); err == nil {
+			t.Fatal("launch unexpectedly succeeded")
+		}
+		original, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fmt.Print(string(original))
+		return
+	case "stdin-fork-lock":
+		path := filepath.Join(t.TempDir(), "invalid-executable")
+		if err := os.WriteFile(path, []byte("not an executable format"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		syscall.ForkLock.RLock()
+		done := make(chan error, 1)
+		go func() {
+			done <- launch([]string{path}, os.Environ(), []byte("secret-payload"))
+		}()
+		select {
+		case err := <-done:
+			syscall.ForkLock.RUnlock()
+			t.Fatalf("launch returned while ForkLock was held: %v", err)
+		case <-time.After(100 * time.Millisecond):
+		}
+		syscall.ForkLock.RUnlock()
+		if err := <-done; err == nil {
+			t.Fatal("launch unexpectedly succeeded")
+		}
+		original, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fmt.Print(string(original))
+		return
 	case "stdin-big":
 		if err := launch([]string{"cat"}, os.Environ(), bytes.Repeat([]byte("x"), maxStdinPrebuffer+4096)); err != nil {
 			fmt.Fprintln(os.Stderr, err)
@@ -39,9 +91,29 @@ func TestLaunchHelperProcess(t *testing.T) {
 		}
 		os.Exit(0)
 	case "stdin-big-term":
-		_ = launch([]string{"sh", "-c", "trap 'exit 7' TERM; cat >/dev/null; echo ready; sleep 30 & wait $!"},
-			os.Environ(), bytes.Repeat([]byte("z"), maxStdinPrebuffer+4096))
+		env := make([]string, 0, len(os.Environ()))
+		for _, entry := range os.Environ() {
+			if !strings.HasPrefix(entry, "GO_LAUNCH_HELPER=") {
+				env = append(env, entry)
+			}
+		}
+		env = append(env, "GO_LAUNCH_HELPER=signal-target")
+		_ = launch([]string{os.Args[0], "-test.run=TestLaunchHelperProcess"},
+			env, bytes.Repeat([]byte("z"), maxStdinPrebuffer+4096))
 		os.Exit(98)
+	case "signal-target":
+		ch := make(chan os.Signal, 1)
+		signal.Notify(ch, syscall.SIGTERM)
+		defer signal.Stop(ch)
+		if _, err := io.Copy(io.Discard, os.Stdin); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(99)
+		}
+		fmt.Println("ready")
+		if sig := <-ch; sig == syscall.SIGTERM {
+			os.Exit(7)
+		}
+		os.Exit(99)
 	case "stdin-big-killed":
 		_ = launch([]string{"sh", "-c", "cat >/dev/null; kill -KILL $$"},
 			os.Environ(), bytes.Repeat([]byte("k"), maxStdinPrebuffer+4096))
@@ -73,6 +145,38 @@ func TestLaunchEnvInjection(t *testing.T) {
 func TestLaunchStdinInjection(t *testing.T) {
 	if !strings.Contains(runLaunchHelper(t, "stdin"), "INJECTED=hello") {
 		t.Errorf("stdin mode: child stdin missing injected payload")
+	}
+}
+
+func TestLaunchStdinInjectionWithClosedStdin(t *testing.T) {
+	if !strings.Contains(runLaunchHelper(t, "stdin-closed"), "INJECTED=hello") {
+		t.Error("child stdin missing injected payload when the parent started with fd 0 closed")
+	}
+}
+
+func TestLaunchExecFailureRestoresStdin(t *testing.T) {
+	cmd := exec.Command(os.Args[0], "-test.run=TestLaunchHelperProcess")
+	cmd.Env = append(os.Environ(), "GO_LAUNCH_HELPER=stdin-exec-failure")
+	cmd.Stdin = strings.NewReader("original-stdin")
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(out); !strings.HasPrefix(got, "original-stdin") || strings.Contains(got, "secret-payload") {
+		t.Errorf("stdin after failed exec = %q, want original input and no injected payload", got)
+	}
+}
+
+func TestLaunchSerializesStdinReplacementWithFork(t *testing.T) {
+	cmd := exec.Command(os.Args[0], "-test.run=TestLaunchHelperProcess")
+	cmd.Env = append(os.Environ(), "GO_LAUNCH_HELPER=stdin-fork-lock")
+	cmd.Stdin = strings.NewReader("original-stdin")
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(out); !strings.HasPrefix(got, "original-stdin") || strings.Contains(got, "secret-payload") {
+		t.Errorf("stdin after serialized failed exec = %q, want original input and no injected payload", got)
 	}
 }
 

@@ -421,6 +421,17 @@ func TestInteractiveLoginUnexpectedSummary(t *testing.T) {
 	}
 }
 
+func TestInteractiveLoginRedactsTokenInUnexpectedSummary(t *testing.T) {
+	const token = "unexpected-summary-token"
+	srv := identityServer(t, startUPOnly, func(t *testing.T, req advanceReq) string {
+		return `{"success":true,"Result":{"Summary":"` + token + `","OAuthTokens":{"access_token":"` + token + `"}}}`
+	})
+	_, err := loginClient(t, srv.URL).InteractiveLogin(context.Background(), &scriptPrompter{})
+	if err == nil || strings.Contains(err.Error(), token) || !strings.Contains(err.Error(), "[REDACTED]") {
+		t.Fatalf("token reflection was not redacted: %v", err)
+	}
+}
+
 func TestInteractiveLoginRedactsAnswerInSuccessfulSummary(t *testing.T) {
 	const answer = "654321MFA"
 	start := `{"SessionId":"s1","TenantId":"t1","Challenges":[

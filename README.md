@@ -92,6 +92,12 @@ proxy), `Header` (gateway headers), `CACert` / `AllowedVaultHosts`, and
 `Backoff`. Full reference: `go doc github.com/DelineaXPM/delinea-tools/api` and
 `.../secrets`.
 
+While `http.DefaultTransport` retains its startup identity, clients without an
+explicit `Transport` clone an immutable snapshot captured when the package
+initializes. Later in-place mutations must be passed as `Config.Transport`;
+replacing `http.DefaultTransport` is detected and used automatically as an
+opaque transport. Opaque transports deliberately disable token caching.
+
 Long-running programs should reuse clients. A program that intentionally
 discards a client can call `CloseIdleConnections` first to release its private
 connection pool promptly. Platform vault routes are cached per vault ID for five

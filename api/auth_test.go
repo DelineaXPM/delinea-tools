@@ -1163,6 +1163,31 @@ func TestValidateGrant(t *testing.T) {
 	}
 }
 
+func TestGrantValidationDoesNotExposeEndpointFields(t *testing.T) {
+	const (
+		password = "reflected-password-value"
+		token    = "newly-issued-token-value"
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprintf(w, `{"access_token":%q,"token_type":%q,"expires_in":3600}`, token, password)
+	}))
+	defer srv.Close()
+
+	c, err := New(Config{URL: srv.URL, Username: "u", Password: password, DisableCache: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = c.Token(context.Background())
+	if !errors.Is(err, ErrAuth) {
+		t.Fatalf("got %v, want ErrAuth", err)
+	}
+	for _, secret := range []string{password, token} {
+		if strings.Contains(err.Error(), secret) {
+			t.Errorf("grant validation error exposed %q: %v", secret, err)
+		}
+	}
+}
+
 func TestSnippet(t *testing.T) {
 	cases := []struct {
 		in   string

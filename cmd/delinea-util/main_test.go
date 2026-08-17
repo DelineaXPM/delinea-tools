@@ -2,10 +2,12 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -470,12 +472,40 @@ func TestFprintResponseSummary(t *testing.T) {
 	h.Set("Content-Type", "application/json")
 	h.Add("X-Multi", "1")
 	h.Add("X-Multi", "2")
+	_, resp := newDiagnosticResponse(t, "configured-token-value", nil, nil)
+	resp.Proto = "HTTP/1.1"
+	resp.Status = "200 OK"
+	resp.Header = h
 	var b strings.Builder
-	fprintResponseSummary(&b, "HTTP/1.1", "200 OK", h)
+	fprintResponseSummary(&b, resp)
 	want := "< HTTP/1.1 200 OK\n< Content-Type: application/json\n< X-Multi: 1\n< X-Multi: 2\n"
 	if b.String() != want {
 		t.Errorf("summary:\ngot  %q\nwant %q", b.String(), want)
 	}
+}
+
+func newDiagnosticResponse(t *testing.T, token string, configuredHeaders, requestHeaders http.Header) (*da.Client, *da.Response) {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(srv.Close)
+	client, err := da.New(da.Config{
+		URL:          srv.URL,
+		Target:       da.TargetPlatform,
+		Token:        token,
+		Header:       configuredHeaders,
+		DisableCache: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := client.Do(context.Background(), da.Request{Method: http.MethodGet, Path: "/", Header: requestHeaders})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	return client, resp
 }
 
 type responseWriteFailure struct{}

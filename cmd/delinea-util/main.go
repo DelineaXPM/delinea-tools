@@ -562,7 +562,7 @@ func cmdCallWithClient(client *da.Client, o *options, method, path string) error
 		return err
 	}
 	if o.verbose {
-		fmt.Fprintf(os.Stderr, "> %s %s\n", method, path)
+		fmt.Fprintf(os.Stderr, "> %s %s\n", clientDiagnosticText(client, method), requestDiagnosticPath(client, path))
 	}
 	resp, err := client.Do(context.Background(), da.Request{
 		Method:   method,
@@ -577,7 +577,7 @@ func cmdCallWithClient(client *da.Client, o *options, method, path string) error
 	}
 	defer resp.Body.Close()
 	if o.verbose {
-		fprintResponseSummary(os.Stderr, resp.Proto, resp.Status, resp.Header)
+		fprintResponseSummary(os.Stderr, resp)
 	}
 	if o.include {
 		// The status line and headers are server-controlled; sanitize them so a
@@ -591,9 +591,30 @@ func cmdCallWithClient(client *da.Client, o *options, method, path string) error
 		return fmt.Errorf("copying response body to stdout: %w", err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return &httpErr{status: resp.Status}
+		return &httpErr{status: responseDiagnosticText(resp, resp.Status)}
 	}
 	return nil
+}
+
+func clientDiagnosticText(client *da.Client, text string) string {
+	if text == "" {
+		return ""
+	}
+	return client.DiagnosticSnippet([]byte(text))
+}
+
+func requestDiagnosticPath(client *da.Client, path string) string {
+	if i := strings.IndexAny(path, "?#"); i >= 0 {
+		path = path[:i]
+	}
+	return clientDiagnosticText(client, path)
+}
+
+func responseDiagnosticText(resp *da.Response, text string) string {
+	if text == "" {
+		return ""
+	}
+	return resp.DiagnosticSnippet([]byte(text))
 }
 
 func writeResponseHead(w io.Writer, proto, status string, h http.Header) error {
@@ -610,10 +631,7 @@ func writeResponseHead(w io.Writer, proto, status string, h http.Header) error {
 }
 
 // sanitizedHeaders yields every header key/value in sorted order, both
-// sanitized against terminal-escape injection. The -i (writeResponseHead) and
-// -v (fprintResponseSummary) renderers share it so there is one definition of
-// how a server-controlled header is ordered and made safe — a change to that
-// cannot leave one path escaping a field the other does not.
+// sanitized against terminal-escape injection for the explicit -i output.
 func sanitizedHeaders(h http.Header) iter.Seq2[string, string] {
 	return func(yield func(string, string) bool) {
 		for _, k := range slices.Sorted(maps.Keys(h)) {
@@ -628,12 +646,14 @@ func sanitizedHeaders(h http.Header) iter.Seq2[string, string] {
 }
 
 // fprintResponseSummary prints the verbose (-v) response summary. Every field
-// is server-controlled and reaches a terminal, so all are sanitized against
-// escape-sequence injection.
-func fprintResponseSummary(w io.Writer, proto, status string, h http.Header) {
-	fmt.Fprintf(w, "< %s %s\n", cli.SanitizeText(proto), cli.SanitizeText(status))
-	for k, v := range sanitizedHeaders(h) {
-		fmt.Fprintf(w, "< %s: %s\n", k, v)
+// is server-controlled and reaches a terminal, so it is bounded, sanitized,
+// and redacted with the exact credentials bound to this response.
+func fprintResponseSummary(w io.Writer, resp *da.Response) {
+	fmt.Fprintf(w, "< %s %s\n", responseDiagnosticText(resp, resp.Proto), responseDiagnosticText(resp, resp.Status))
+	for _, k := range slices.Sorted(maps.Keys(resp.Header)) {
+		for _, v := range resp.Header[k] {
+			fmt.Fprintf(w, "< %s: %s\n", responseDiagnosticText(resp, k), responseDiagnosticText(resp, v))
+		}
 	}
 }
 

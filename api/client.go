@@ -114,6 +114,11 @@ type Config struct {
 	// each its own CACert (and accept a pool per client) instead.
 	// A custom Transport disables token caching because its authentication
 	// behavior is opaque to the package.
+	//
+	// Clients without Transport clone the process default as it existed when
+	// this package initialized. Later in-place changes to http.DefaultTransport
+	// are deliberately ignored; pass the changed transport here explicitly so
+	// its opaque grant boundary is enforced.
 	Transport http.RoundTripper `json:"-"`
 
 	// Header is merged into every request sent to the primary target's origin.
@@ -153,7 +158,9 @@ type Config struct {
 	// handler to see why a call was slow or a credential refused. Events
 	// carry metadata and, on a failed grant, the bounded credential-redacted
 	// snippet of the token endpoint's error response; never a credential, a
-	// request body, a successful response body, or a URL query string.
+	// request body, a successful response body, or a URL query string. Error
+	// details from an opaque caller-supplied transport are suppressed because
+	// arbitrary transport code may derive them from a request or response body.
 	Logger *slog.Logger `json:"-"`
 
 	AllowedVaultHosts []string // extra hosts trusted for discovered vault URLs
@@ -374,7 +381,16 @@ func (r *BufferedResponse) DiagnosticSnippet() string {
 	if r == nil {
 		return diagnosticUnavailable
 	}
-	return bufferedBindings.snippet(r, r.Body)
+	return r.diagnosticSnippet(r.Body)
+}
+
+// diagnosticSnippet applies this response's exact request-bound redaction to
+// related server-controlled fields as well as to Body.
+func (r *BufferedResponse) diagnosticSnippet(text []byte) string {
+	if r == nil {
+		return diagnosticUnavailable
+	}
+	return bufferedBindings.snippet(r, text)
 }
 
 // diagnosticUnavailable is the shared fail-closed rendering for a response
@@ -386,15 +402,16 @@ const diagnosticUnavailable = "(diagnostic unavailable)"
 // Client authenticates against one Delinea target and performs API calls.
 // It is safe for concurrent use.
 type Client struct {
-	cfg     Config
-	target  Target
-	base    *url.URL
-	hc      *http.Client
-	timeout time.Duration
-	retries int
-	backoff func(attempt int) time.Duration
-	now     func() time.Time
-	log     *slog.Logger // never nil; a discard handler when Config.Logger is unset
+	cfg             Config
+	target          Target
+	base            *url.URL
+	hc              *http.Client
+	opaqueTransport bool
+	timeout         time.Duration
+	retries         int
+	backoff         func(attempt int) time.Duration
+	now             func() time.Time
+	log             *slog.Logger // never nil; a discard handler when Config.Logger is unset
 	// flightID enrolls this client in cross-client grant coalescing, scoped to
 	// its pointer-valued cache instance (see flight.go). Zero disables it.
 	flightID flightIdentity
@@ -525,6 +542,7 @@ func New(cfg Config) (*Client, error) {
 			Transport:     transport,
 			CheckRedirect: checkRedirect,
 		},
+		opaqueTransport: opaqueTransport,
 		timeout:         effectiveTimeout(cfg),
 		retries:         retries,
 		backoff:         backoff,
@@ -579,6 +597,17 @@ func effectiveTimeout(cfg Config) time.Duration {
 // grants never enter the shared cache.
 var initialDefaultTransport = http.DefaultTransport
 
+// initialDefaultHTTPTransport is an immutable configuration snapshot. Keeping
+// only initialDefaultTransport's pointer would let an in-place mutation change
+// the proxy, dialer, or TLS path while still looking non-opaque to the cache.
+var initialDefaultHTTPTransport = func() *http.Transport {
+	dt, ok := initialDefaultTransport.(*http.Transport)
+	if !ok {
+		return nil
+	}
+	return dt.Clone()
+}()
+
 // sameRoundTripperIdentity compares only values Go can compare safely. An
 // unusual non-comparable RoundTripper (for example a function adapter) is
 // conservatively opaque rather than triggering an interface-comparison panic.
@@ -618,8 +647,7 @@ func newTransport(cfg Config) (http.RoundTripper, bool, error) {
 		}
 		return http.DefaultTransport, true, nil
 	}
-	dt, ok := http.DefaultTransport.(*http.Transport)
-	if !ok {
+	if _, ok := initialDefaultTransport.(*http.Transport); !ok || initialDefaultHTTPTransport == nil {
 		// The default this package started under is itself not *http.Transport
 		// (replaced before our init ran): same opacity rules apply.
 		if cfg.SkipTLSVerify || len(cfg.CACert) > 0 {
@@ -627,7 +655,11 @@ func newTransport(cfg Config) (http.RoundTripper, bool, error) {
 		}
 		return http.DefaultTransport, true, nil
 	}
-	tr := dt.Clone()
+	// Clone the startup snapshot, not the still-pointer-identical global. A
+	// caller that mutates http.DefaultTransport in place after package init must
+	// not silently move grants onto a different route while retaining the same
+	// shared-cache identity.
+	tr := initialDefaultHTTPTransport.Clone()
 	if cfg.SkipTLSVerify || len(cfg.CACert) > 0 {
 		tc := &tls.Config{InsecureSkipVerify: cfg.SkipTLSVerify} //nolint:gosec // opt-in, CLI-warned
 		if len(cfg.CACert) > 0 {
@@ -793,6 +825,28 @@ type safeTransportDiagnostic struct {
 
 func (e *safeTransportDiagnostic) Error() string { return e.message }
 func (e *safeTransportDiagnostic) Unwrap() error { return e.err }
+
+// opaqueTransportDiagnostic exposes only facts established by this package.
+// Error text from a caller-supplied transport is untrusted: it can contain an
+// arbitrary request or response body. Keep that error in the unwrap chain, but
+// never render it into a returned error or logger attribute.
+func opaqueTransportDiagnostic(operation string, err error) error {
+	classified := classifyTransport(err)
+	kind := ErrTransport.Error()
+	switch {
+	case errors.Is(classified, ErrConfig):
+		kind = ErrConfig.Error()
+	case errors.Is(classified, ErrTimeout):
+		kind = ErrTimeout.Error()
+	}
+	if errors.Is(classified, context.Canceled) {
+		kind = "request canceled"
+	}
+	return &safeTransportDiagnostic{
+		message: kind + ": " + operation + " (opaque transport details suppressed)",
+		err:     classified,
+	}
+}
 
 // Do performs one authenticated API call. It returns a Response for any HTTP
 // status code; errors are reserved for configuration, authentication, vault
@@ -994,7 +1048,10 @@ func readRequestBody(ctx context.Context, r io.Reader) ([]byte, error) {
 		return nil, classifyTransport(ctxErr)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("reading request body: %w", err)
+		return nil, &safeTransportDiagnostic{
+			message: "reading request body failed (details suppressed)",
+			err:     err,
+		}
 	}
 	return body, nil
 }
@@ -1087,9 +1144,11 @@ func (c *Client) send(ctx context.Context, method string, base *url.URL, r Reque
 		attempts = c.retries
 	}
 	logPath := r.Path
-	if i := strings.IndexByte(logPath, '?'); i >= 0 {
-		logPath = logPath[:i] // the query can carry caller data; never log it
+	if i := strings.IndexAny(logPath, "?#"); i >= 0 {
+		logPath = logPath[:i] // query and fragment can carry caller data
 	}
+	requestSecrets := append([]string{tok}, headerValues(r.Header)...)
+	logPath = c.diagnosticFormatter(requestSecrets...)([]byte(logPath))
 	var last error
 	for a := range attempts {
 		resp, err := c.attempt(ctx, method, base, r, tok, body)
@@ -1199,7 +1258,7 @@ func (c *Client) attempt(ctx context.Context, method string, base *url.URL, r Re
 		cancel()
 	})
 	requestSecrets := append([]string{tok}, headerValues(r.Header)...)
-	classify := c.transportErrorClassifier(diagnosticRedactionFloor, requestSecrets)
+	classify := c.transportErrorClassifier("API request", diagnosticRedactionFloor, requestSecrets)
 	resp, err := c.hc.Do(req)
 	if err != nil {
 		watchdog.Stop()
@@ -1375,7 +1434,13 @@ func (b *idleBody) Close() error {
 	b.timer.Stop()
 	err := b.rc.Close()
 	b.cancel()
-	return err
+	if err == nil {
+		return nil
+	}
+	if b.classify != nil {
+		return b.classify(err)
+	}
+	return classifyTransport(err)
 }
 
 // retryDelay parses a Retry-After header (seconds or HTTP-date) into the wait

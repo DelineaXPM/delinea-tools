@@ -424,7 +424,7 @@ func (c *Client) grantOnce(ctx context.Context, endpoint string, form url.Values
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	resp, err := c.hc.Do(req)
 	if err != nil {
-		return grantResponse{}, 0, "", c.transportErrorClassifier(1, nil)(fmt.Errorf("requesting token: %w", err))
+		return grantResponse{}, 0, "", c.transportErrorClassifier("requesting token", 1, nil)(fmt.Errorf("requesting token: %w", err))
 	}
 	defer resp.Body.Close()
 	body, oversized, err := readAuthResponse(resp.Body)
@@ -439,7 +439,7 @@ func (c *Client) grantOnce(ctx context.Context, endpoint string, form url.Values
 			return grantResponse{}, resp.StatusCode, resp.Header.Get("Retry-After"),
 				c.grantStatusError(resp.StatusCode, resp.Status, nil)
 		}
-		return grantResponse{}, 0, "", c.transportErrorClassifier(1, nil)(fmt.Errorf("reading token response: %w", err))
+		return grantResponse{}, 0, "", c.transportErrorClassifier("reading token response", 1, nil)(fmt.Errorf("reading token response: %w", err))
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return grantResponse{}, resp.StatusCode, resp.Header.Get("Retry-After"),
@@ -501,7 +501,10 @@ func validateGrant(g grantResponse) error {
 		return err
 	}
 	if g.TokenType != "" && !strings.EqualFold(g.TokenType, "Bearer") {
-		return fmt.Errorf("unsupported token_type %q", g.TokenType)
+		// token_type is endpoint-controlled and can reflect a submitted
+		// credential or the newly issued token. Its value is not needed to
+		// diagnose the protocol violation, so never put it in an error.
+		return fmt.Errorf("unsupported token_type (want Bearer)")
 	}
 	if g.ExpiresIn <= 0 {
 		return fmt.Errorf("expires_in must be greater than zero")
@@ -599,11 +602,15 @@ func (c *Client) redactionValues(requestSecrets []string, extra ...string) ([]st
 }
 
 // transportErrorClassifier binds credential redaction to one request while
-// preserving the classified error's unwrap chain. A custom RoundTripper or
-// response Body is arbitrary caller code and may echo headers, authorization,
-// grant fields, or an MFA answer in its error; only the printable diagnostic is
-// replaced, so errors.Is/errors.As still reach the original cause.
-func (c *Client) transportErrorClassifier(minCredentialLen int, requestSecrets []string, extra ...string) func(error) error {
+// preserving the classified error's unwrap chain. An opaque RoundTripper or
+// response Body is arbitrary caller code and may derive its error text from a
+// request or response body, which cannot be redacted reliably. Its printable
+// diagnostic is therefore reduced to a stable operation and error class; the
+// original remains available through errors.Is/errors.As.
+func (c *Client) transportErrorClassifier(operation string, minCredentialLen int, requestSecrets []string, extra ...string) func(error) error {
+	if c.opaqueTransport {
+		return func(err error) error { return opaqueTransportDiagnostic(operation, err) }
+	}
 	unconditional, conditional := c.redactionValues(requestSecrets, extra...)
 	redactor := sync.OnceValue(func() func(string) string {
 		return buildRedactor(minCredentialLen, unconditional, conditional)

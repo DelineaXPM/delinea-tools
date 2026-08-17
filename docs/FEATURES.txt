@@ -125,6 +125,9 @@ SECURITY PROPERTIES
   - TLS trust is per-client: CACert and SkipTLSVerify never mutate
     http.DefaultTransport, so other HTTPS in the process is unaffected; TLS-trust
     settings scope the token cache; cross-origin redirects on grants are refused.
+    The standard transport is snapshotted at package initialization; later
+    in-place changes must be supplied as Config.Transport and are treated as
+    opaque, with token caching disabled.
   - Vault-broker URLs are treated as untrusted input: HTTPS only, no userinfo,
     host must be same-origin, on the Delinea cloud-domain allowlist, or
     explicitly permitted.
