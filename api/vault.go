@@ -8,9 +8,30 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+	"sync/atomic"
+	"time"
 )
 
 const maxVaultResponseBytes = 4 << 20
+
+// vaultURLFreshness bounds how long routing learned from the Platform broker
+// can remain unobservably stale. Discovery is synchronous after this window:
+// a broker failure is returned rather than sending a request to an expired
+// route that an operator may have deactivated or replaced.
+const vaultURLFreshness = 5 * time.Minute
+
+type cachedVaultURL struct {
+	url          *url.URL
+	discoveredAt time.Time
+}
+
+type inflightVaultLookup struct {
+	done        chan struct{}
+	url         *url.URL
+	err         error
+	leaderLocal bool
+	waiters     atomic.Int32 // observability and deterministic cancellation tests
+}
 
 // Vault is one entry from the platform vault broker's inventory.
 type Vault struct {
@@ -70,7 +91,7 @@ func (c *Client) Vaults(ctx context.Context) ([]Vault, error) {
 	return vr.Vaults, nil
 }
 
-// VaultURLByID discovers, validates, and memoizes the URL of a specific vault
+// VaultURLByID discovers, validates, and temporarily memoizes the URL of a specific vault
 // by its vaultId, for callers that must reach a non-default vault. The URL is
 // held to the same trust policy as the default. An empty id is refused rather
 // than read as "the default": a caller passing through an unset configured ID
@@ -84,23 +105,87 @@ func (c *Client) VaultURLByID(ctx context.Context, id string) (*url.URL, error) 
 }
 
 // VaultURL discovers, validates, and memoizes the platform's default active
-// vault URL.
+// vault URL for five minutes. After that it synchronously refreshes the route;
+// a refresh failure is returned rather than using expired routing data.
 func (c *Client) VaultURL(ctx context.Context) (*url.URL, error) {
 	return c.vaultURLFor(ctx, "")
 }
 
-// vaultURLFor is the one discover-validate-memoize path behind VaultURL and
-// VaultURLByID: the default active vault when id is empty, the named vault
-// otherwise. Memo entries key on id, with the default under "".
+// vaultURLFor returns a fresh cached route or coalesces onto one broker lookup
+// for this vault id. Network work runs without vaultMu held, so lookups for
+// different ids proceed independently and canceled waiters return promptly.
 func (c *Client) vaultURLFor(ctx context.Context, id string) (*url.URL, error) {
-	c.vaultMu.Lock()
-	if vu, ok := c.vaultByID[id]; ok {
-		u := *vu
+	for {
+		now := c.now()
+		c.vaultMu.Lock()
+		if cached, ok := c.vaultByID[id]; ok && now.Before(cached.discoveredAt.Add(vaultURLFreshness)) {
+			u := *cached.url
+			c.vaultMu.Unlock()
+			return &u, nil
+		}
+		if lookup := c.vaultDiscover[id]; lookup != nil {
+			lookup.waiters.Add(1)
+			c.vaultMu.Unlock()
+			select {
+			case <-lookup.done:
+				if lookup.err != nil && lookup.leaderLocal {
+					continue
+				}
+				if lookup.err != nil {
+					return nil, lookup.err
+				}
+				u := *lookup.url
+				return &u, nil
+			case <-ctx.Done():
+				return nil, classifyTransport(ctx.Err())
+			}
+		}
+		if c.vaultDiscover == nil {
+			c.vaultDiscover = make(map[string]*inflightVaultLookup)
+		}
+		lookup := &inflightVaultLookup{done: make(chan struct{})}
+		c.vaultDiscover[id] = lookup
 		c.vaultMu.Unlock()
-		return &u, nil
+		return c.runVaultLookup(ctx, id, lookup)
 	}
-	c.vaultMu.Unlock()
+}
 
+// runVaultLookup publishes every outcome and always releases coalesced waiters,
+// including when caller-provided transport code panics. A failure owned by the
+// leader's context is not shared: waiters retry with their own live contexts.
+func (c *Client) runVaultLookup(ctx context.Context, id string, lookup *inflightVaultLookup) (*url.URL, error) {
+	completed := false
+	finish := func(vu *url.URL, err error, leaderLocal bool) {
+		c.vaultMu.Lock()
+		lookup.url, lookup.err, lookup.leaderLocal = vu, err, leaderLocal
+		delete(c.vaultDiscover, id)
+		if err == nil {
+			if c.vaultByID == nil {
+				c.vaultByID = make(map[string]cachedVaultURL)
+			}
+			c.vaultByID[id] = cachedVaultURL{url: vu, discoveredAt: c.now()}
+		}
+		close(lookup.done)
+		c.vaultMu.Unlock()
+		completed = true
+	}
+	defer func() {
+		if !completed {
+			finish(nil, fmt.Errorf("%w: vault discovery aborted", ErrTransport), true)
+		}
+	}()
+
+	vu, err := c.discoverVaultURL(ctx, id)
+	if err != nil {
+		finish(nil, err, leaderLocalFailure(ctx.Err(), err))
+		return nil, err
+	}
+	finish(vu, nil, false)
+	u := *vu
+	return &u, nil
+}
+
+func (c *Client) discoverVaultURL(ctx context.Context, id string) (*url.URL, error) {
 	vaults, err := c.Vaults(ctx)
 	if err != nil {
 		return nil, err
@@ -119,14 +204,7 @@ func (c *Client) vaultURLFor(ctx context.Context, id string) (*url.URL, error) {
 			return nil, err
 		}
 		c.log.DebugContext(ctx, "vault selected", "vault_id", v.VaultID, "name", v.Name, "host", vu.Host)
-		c.vaultMu.Lock()
-		if c.vaultByID == nil {
-			c.vaultByID = map[string]*url.URL{}
-		}
-		c.vaultByID[id] = vu
-		c.vaultMu.Unlock()
-		u := *vu
-		return &u, nil
+		return vu, nil
 	}
 	if id == "" {
 		return nil, fmt.Errorf("%w: no default active vault configured", ErrVault)

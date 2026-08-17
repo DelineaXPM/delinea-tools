@@ -10,6 +10,8 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -120,6 +122,403 @@ func TestUseVaultRoutesToDiscoveredVault(t *testing.T) {
 	}
 	if brokerCalls != 1 {
 		t.Errorf("broker calls: got %d, want 1 (vault URL should be memoized)", brokerCalls)
+	}
+}
+
+func TestVaultURLRefreshesAfterFreshnessWindow(t *testing.T) {
+	var brokerCalls atomic.Int32
+	var route atomic.Value
+	route.Store("https://one.secretservercloud.com")
+	platformSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/identity/api/oauth2/token/xpmplatform":
+			fmt.Fprint(w, grantJSON("plat-tok"))
+		case "/vaultbroker/api/vaults":
+			brokerCalls.Add(1)
+			fmt.Fprintf(w, `{"vaults":[{"vaultId":"1","isDefault":true,"isActive":true,"connection":{"url":%q}}]}`, route.Load().(string))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(platformSrv.Close)
+
+	c, err := New(Config{URL: platformSrv.URL, ClientID: "c", ClientSecret: "s", Retries: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1000, 0)
+	c.now = func() time.Time { return now }
+
+	for range 2 {
+		vu, err := c.VaultURL(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := vu.String(); got != "https://one.secretservercloud.com" {
+			t.Fatalf("cached route = %q", got)
+		}
+	}
+	if got := brokerCalls.Load(); got != 1 {
+		t.Fatalf("broker calls inside freshness window = %d, want 1", got)
+	}
+
+	route.Store("https://two.secretservercloud.com")
+	now = now.Add(vaultURLFreshness)
+	vu, err := c.VaultURL(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := vu.String(); got != "https://two.secretservercloud.com" {
+		t.Fatalf("refreshed route = %q", got)
+	}
+	if got := brokerCalls.Load(); got != 2 {
+		t.Fatalf("broker calls after expiry = %d, want 2", got)
+	}
+}
+
+func TestConcurrentExpiredVaultURLRefreshCoalesces(t *testing.T) {
+	var brokerCalls atomic.Int32
+	refreshStarted := make(chan struct{})
+	releaseRefresh := make(chan struct{})
+	platformSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/identity/api/oauth2/token/xpmplatform":
+			fmt.Fprint(w, grantJSON("plat-tok"))
+		case "/vaultbroker/api/vaults":
+			call := brokerCalls.Add(1)
+			if call == 2 {
+				close(refreshStarted)
+				<-releaseRefresh
+			}
+			fmt.Fprint(w, `{"vaults":[{"vaultId":"1","isDefault":true,"isActive":true,"connection":{"url":"https://vault.secretservercloud.com"}}]}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(platformSrv.Close)
+
+	c, err := New(Config{URL: platformSrv.URL, ClientID: "c", ClientSecret: "s", Retries: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var unixNano atomic.Int64
+	unixNano.Store(time.Unix(1000, 0).UnixNano())
+	c.now = func() time.Time { return time.Unix(0, unixNano.Load()) }
+	if _, err := c.VaultURL(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	unixNano.Add(vaultURLFreshness.Nanoseconds())
+
+	const callers = 24
+	errCh := make(chan error, callers)
+	var wg sync.WaitGroup
+	wg.Add(callers)
+	for range callers {
+		go func() {
+			defer wg.Done()
+			_, err := c.VaultURL(context.Background())
+			errCh <- err
+		}()
+	}
+	<-refreshStarted
+	close(releaseRefresh)
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		if err != nil {
+			t.Errorf("coalesced refresh: %v", err)
+		}
+	}
+	if got := brokerCalls.Load(); got != 2 {
+		t.Fatalf("broker calls = %d, want one initial lookup and one coalesced refresh", got)
+	}
+}
+
+func TestVaultURLRejectsUntrustedRefreshWithoutCachingIt(t *testing.T) {
+	var brokerCalls atomic.Int32
+	var phase atomic.Int32
+	platformSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/identity/api/oauth2/token/xpmplatform":
+			fmt.Fprint(w, grantJSON("plat-tok"))
+		case "/vaultbroker/api/vaults":
+			brokerCalls.Add(1)
+			route := "https://one.secretservercloud.com"
+			switch phase.Load() {
+			case 1:
+				route = "https://vault.attacker.example"
+			case 2:
+				route = "https://two.secretservercloud.com"
+			}
+			fmt.Fprintf(w, `{"vaults":[{"vaultId":"1","isDefault":true,"isActive":true,"connection":{"url":%q}}]}`, route)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(platformSrv.Close)
+
+	c, err := New(Config{URL: platformSrv.URL, ClientID: "c", ClientSecret: "s", Retries: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1000, 0)
+	c.now = func() time.Time { return now }
+	if _, err := c.VaultURL(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(vaultURLFreshness)
+	phase.Store(1)
+	if _, err := c.VaultURL(context.Background()); !errors.Is(err, ErrVault) {
+		t.Fatalf("untrusted replacement: got %v, want ErrVault", err)
+	}
+	phase.Store(2)
+	vu, err := c.VaultURL(context.Background())
+	if err != nil {
+		t.Fatalf("lookup after rejected replacement: %v", err)
+	}
+	if got := vu.String(); got != "https://two.secretservercloud.com" {
+		t.Fatalf("route after rejected replacement = %q", got)
+	}
+	if got := brokerCalls.Load(); got != 3 {
+		t.Fatalf("broker calls = %d, want rejected route not to be cached", got)
+	}
+}
+
+func TestVaultURLDoesNotUseExpiredRouteAfterBrokerFailure(t *testing.T) {
+	var brokerCalls atomic.Int32
+	var phase atomic.Int32
+	platformSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/identity/api/oauth2/token/xpmplatform":
+			fmt.Fprint(w, grantJSON("plat-tok"))
+		case "/vaultbroker/api/vaults":
+			brokerCalls.Add(1)
+			if phase.Load() == 1 {
+				http.Error(w, "broker unavailable", http.StatusServiceUnavailable)
+				return
+			}
+			route := "https://one.secretservercloud.com"
+			if phase.Load() == 2 {
+				route = "https://two.secretservercloud.com"
+			}
+			fmt.Fprintf(w, `{"vaults":[{"vaultId":"1","isDefault":true,"isActive":true,"connection":{"url":%q}}]}`, route)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(platformSrv.Close)
+
+	c, err := New(Config{URL: platformSrv.URL, ClientID: "c", ClientSecret: "s", Retries: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1000, 0)
+	c.now = func() time.Time { return now }
+	if _, err := c.VaultURL(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(vaultURLFreshness)
+	phase.Store(1)
+	if _, err := c.VaultURL(context.Background()); !errors.Is(err, ErrTransport) {
+		t.Fatalf("expired route with failed refresh: got %v, want ErrTransport", err)
+	}
+	phase.Store(2)
+	vu, err := c.VaultURL(context.Background())
+	if err != nil {
+		t.Fatalf("lookup after failed refresh: %v", err)
+	}
+	if got := vu.String(); got != "https://two.secretservercloud.com" {
+		t.Fatalf("route after broker recovery = %q", got)
+	}
+	if got := brokerCalls.Load(); got != 3 {
+		t.Fatalf("broker calls = %d, want failed refresh not to cache stale routing", got)
+	}
+}
+
+func TestCanceledVaultRefreshDoesNotPoisonWaiters(t *testing.T) {
+	var brokerCalls atomic.Int32
+	refreshStarted := make(chan struct{})
+	response := func(r *http.Request, body string) *http.Response {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Status:     "200 OK",
+			Proto:      "HTTP/1.1",
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Request:    r,
+		}
+	}
+	rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		switch r.URL.Path {
+		case "/identity/api/oauth2/token/xpmplatform":
+			return response(r, grantJSON("plat-tok")), nil
+		case "/vaultbroker/api/vaults":
+			call := brokerCalls.Add(1)
+			if call == 2 {
+				close(refreshStarted)
+				<-r.Context().Done()
+				return nil, r.Context().Err()
+			}
+			return response(r, `{"vaults":[{"vaultId":"1","isDefault":true,"isActive":true,"connection":{"url":"https://vault.secretservercloud.com"}}]}`), nil
+		default:
+			return response(r, "not found"), nil
+		}
+	})
+	c, err := New(Config{
+		URL: "https://platform.example.com", Target: TargetPlatform,
+		ClientID: "c", ClientSecret: "s", Transport: rt, Retries: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1000, 0)
+	c.now = func() time.Time { return now }
+	if _, err := c.VaultURL(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(vaultURLFreshness)
+
+	leaderCtx, cancelLeader := context.WithCancel(context.Background())
+	leaderDone := make(chan error, 1)
+	go func() {
+		_, err := c.VaultURL(leaderCtx)
+		leaderDone <- err
+	}()
+	<-refreshStarted
+	waiterDone := make(chan error, 1)
+	go func() {
+		_, err := c.VaultURL(context.Background())
+		waiterDone <- err
+	}()
+	for {
+		c.vaultMu.Lock()
+		lookup := c.vaultDiscover[""]
+		waiting := lookup != nil && lookup.waiters.Load() > 0
+		c.vaultMu.Unlock()
+		if waiting {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	cancelLeader()
+	if err := <-leaderDone; !errors.Is(err, context.Canceled) {
+		t.Fatalf("leader: got %v, want context.Canceled", err)
+	}
+	if err := <-waiterDone; err != nil {
+		t.Fatalf("waiter inherited canceled refresh: %v", err)
+	}
+	if got := brokerCalls.Load(); got != 3 {
+		t.Fatalf("broker calls = %d, want waiter to retry after canceled refresh", got)
+	}
+}
+
+func TestPanickingVaultLookupReleasesWaiters(t *testing.T) {
+	var brokerCalls atomic.Int32
+	lookupStarted := make(chan struct{})
+	releaseLookup := make(chan struct{})
+	response := func(r *http.Request, body string) *http.Response {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Status:     "200 OK",
+			Proto:      "HTTP/1.1",
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Request:    r,
+		}
+	}
+	rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		switch r.URL.Path {
+		case "/identity/api/oauth2/token/xpmplatform":
+			return response(r, grantJSON("plat-tok")), nil
+		case "/vaultbroker/api/vaults":
+			if brokerCalls.Add(1) == 1 {
+				close(lookupStarted)
+				<-releaseLookup
+				panic("caller transport panic")
+			}
+			return response(r, `{"vaults":[{"vaultId":"1","isDefault":true,"isActive":true,"connection":{"url":"https://vault.secretservercloud.com"}}]}`), nil
+		default:
+			return response(r, "not found"), nil
+		}
+	})
+	c, err := New(Config{
+		URL: "https://platform.example.com", Target: TargetPlatform,
+		ClientID: "c", ClientSecret: "s", Transport: rt, Retries: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	leaderPanic := make(chan any, 1)
+	go func() {
+		defer func() { leaderPanic <- recover() }()
+		_, _ = c.VaultURL(context.Background())
+	}()
+	<-lookupStarted
+	waiterDone := make(chan error, 1)
+	go func() {
+		_, err := c.VaultURL(context.Background())
+		waiterDone <- err
+	}()
+	for {
+		c.vaultMu.Lock()
+		lookup := c.vaultDiscover[""]
+		waiting := lookup != nil && lookup.waiters.Load() > 0
+		c.vaultMu.Unlock()
+		if waiting {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	close(releaseLookup)
+	if recovered := <-leaderPanic; recovered == nil {
+		t.Fatal("leader did not propagate caller transport panic")
+	}
+	if err := <-waiterDone; err != nil {
+		t.Fatalf("waiter remained poisoned after leader panic: %v", err)
+	}
+	if got := brokerCalls.Load(); got != 2 {
+		t.Fatalf("broker calls = %d, want waiter retry after panic", got)
+	}
+}
+
+func TestVaultURLCachesDifferentIDsIndependently(t *testing.T) {
+	var brokerCalls atomic.Int32
+	platformSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/identity/api/oauth2/token/xpmplatform":
+			fmt.Fprint(w, grantJSON("plat-tok"))
+		case "/vaultbroker/api/vaults":
+			brokerCalls.Add(1)
+			fmt.Fprint(w, `{"vaults":[
+				{"vaultId":"default","isDefault":true,"isActive":true,"connection":{"url":"https://default.secretservercloud.com"}},
+				{"vaultId":"named","isDefault":false,"isActive":true,"connection":{"url":"https://named.secretservercloud.com"}}
+			]}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(platformSrv.Close)
+
+	c, err := New(Config{URL: platformSrv.URL, ClientID: "c", ClientSecret: "s", Retries: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		defaultURL, err := c.VaultURL(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		namedURL, err := c.VaultURLByID(context.Background(), "named")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if defaultURL.Host != "default.secretservercloud.com" || namedURL.Host != "named.secretservercloud.com" {
+			t.Fatalf("routes crossed ids: default=%s named=%s", defaultURL, namedURL)
+		}
+	}
+	if got := brokerCalls.Load(); got != 2 {
+		t.Fatalf("broker calls = %d, want one independently cached lookup per id", got)
 	}
 }
 

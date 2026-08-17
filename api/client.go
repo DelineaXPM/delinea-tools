@@ -406,8 +406,9 @@ type Client struct {
 	tokenFromCache bool
 	granting       *inflightGrant // non-nil while a grant is in flight, so peers coalesce onto it and share its outcome
 
-	vaultMu   sync.Mutex
-	vaultByID map[string]*url.URL // memoized vault URLs by vaultId; the default under ""
+	vaultMu       sync.Mutex
+	vaultByID     map[string]cachedVaultURL       // memoized vault URLs by vaultId; the default under ""
+	vaultDiscover map[string]*inflightVaultLookup // concurrent discoveries coalesce independently by vaultId
 }
 
 // String and GoString render the Client through Config's redaction. Config is
@@ -1033,12 +1034,12 @@ func retriableErr(err error) bool {
 	return errors.Is(err, ErrTransport) || errors.Is(err, ErrTimeout)
 }
 
-// leaderLocalFailure reports that a grant failure is the grant leader's own —
-// so a waiter coalesced onto it, holding its own context, should retry rather
-// than share it. It holds only when the leader's context is done (ctxErr) and
-// the grant error IS that context error: the failure was caused by the leader's
-// own cancellation or deadline, which says nothing about whether this waiter
-// can get a token.
+// leaderLocalFailure reports that a coalesced operation's failure is the
+// leader's own, so a waiter holding its own context should retry rather than
+// share it. It holds only when the leader's context is done (ctxErr) and the
+// operation error IS that context error: the failure was caused by the
+// leader's own cancellation or deadline, which says nothing about whether a
+// waiter can complete the token grant or vault lookup.
 //
 // Matching the error against the context — not merely testing ctxErr != nil —
 // is deliberate, and settles a decision this predicate has circled:
@@ -1062,8 +1063,8 @@ func retriableErr(err error) bool {
 // that its own caller's retry loop re-attempts. Sharing when the cause is
 // ambiguous is the safe default: it never re-grants against a struggling
 // endpoint and never retries a denial.
-func leaderLocalFailure(ctxErr, grantErr error) bool {
-	return ctxErr != nil && errors.Is(grantErr, ctxErr)
+func leaderLocalFailure(ctxErr, operationErr error) bool {
+	return ctxErr != nil && errors.Is(operationErr, ctxErr)
 }
 
 // send runs the token-authenticated attempt/retry loop for one call and hands
