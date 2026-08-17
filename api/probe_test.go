@@ -130,27 +130,42 @@ func TestProbeBackendIgnoresUnhealthyStatus(t *testing.T) {
 	}
 }
 
-// A plain-text health page mentioning Healthy must count: Secret Server's
-// health endpoint can answer that way.
-func TestProbeBackendNonJSONBody(t *testing.T) {
-	srv := healthServer(t, "/api/v1/healthcheck", "Healthy")
-	got, err := ProbeBackend(context.Background(), Config{URL: srv.URL})
-	if err != nil {
-		t.Fatalf("got %v, want nil", err)
+func TestProbeHealthyRecognizesOnlyAuthoritativeResponses(t *testing.T) {
+	tests := []struct {
+		name   string
+		status int
+		body   string
+		want   bool
+	}{
+		{"json healthy", http.StatusOK, `{"healthy":true}`, true},
+		{"json unhealthy", http.StatusOK, `{"healthy":false}`, false},
+		{"json without field", http.StatusOK, `{"status":"Healthy"}`, false},
+		{"trimmed legacy", http.StatusOK, " \tHealthy\r\n", true},
+		{"lowercase legacy", http.StatusOK, "healthy", true},
+		{"not healthy", http.StatusOK, "Not Healthy", false},
+		{"unhealthy", http.StatusOK, "UnHealthy", false},
+		{"html", http.StatusOK, "<html>Healthy</html>", false},
+		{"redirect", http.StatusFound, `{"healthy":true}`, false},
+		{"client error", http.StatusNotFound, "Healthy", false},
+		{"server error", http.StatusServiceUnavailable, "Healthy", false},
 	}
-	if got != BackendSecretServer {
-		t.Errorf("got %q, want %q", got, BackendSecretServer)
-	}
-}
-
-func TestProbeBackendJSONWithoutHealthyField(t *testing.T) {
-	srv := healthServer(t, "/api/v1/healthcheck", `{"status":"Healthy"}`)
-	got, err := ProbeBackend(context.Background(), Config{URL: srv.URL})
-	if err != nil {
-		t.Fatalf("got %v, want nil", err)
-	}
-	if got != BackendSecretServer {
-		t.Errorf("got %q, want %q: valid JSON without a healthy field must fall back to the substring, not read as unhealthy", got, BackendSecretServer)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(tt.status)
+				fmt.Fprint(w, tt.body)
+			}))
+			t.Cleanup(srv.Close)
+			client := srv.Client()
+			client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+			got, err := probeHealthy(context.Background(), client, srv.URL, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tt.want {
+				t.Errorf("probeHealthy(%d, %q) = %v, want %v", tt.status, tt.body, got, tt.want)
+			}
+		})
 	}
 }
 
@@ -316,6 +331,27 @@ func TestProbeBackendRejectsInvalidConfiguredHeader(t *testing.T) {
 	}
 	if !errors.Is(err, ErrConfig) {
 		t.Fatalf("got %v, want ErrConfig", err)
+	}
+}
+
+type headerEchoErrorTransport struct{}
+
+func (headerEchoErrorTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	return nil, fmt.Errorf("gateway rejected key %s", r.Header.Get("X-Gateway-Key"))
+}
+
+func TestProbeBackendRedactsConfiguredHeaderFromTransportError(t *testing.T) {
+	const secret = "short-gateway-secret"
+	_, err := ProbeBackend(context.Background(), Config{
+		URL:       "https://unroutable.invalid",
+		Header:    http.Header{"X-Gateway-Key": {secret}},
+		Transport: headerEchoErrorTransport{},
+	})
+	if !errors.Is(err, ErrTransport) {
+		t.Fatalf("got %v, want ErrTransport", err)
+	}
+	if strings.Contains(err.Error(), secret) || !strings.Contains(err.Error(), "[REDACTED]") {
+		t.Fatalf("probe transport diagnostic exposed configured header: %v", err)
 	}
 }
 

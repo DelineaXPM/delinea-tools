@@ -1,12 +1,36 @@
 package api
 
 import (
+	"encoding/json"
 	"net/url"
 	"strings"
 	"testing"
 	"time"
 	"unicode"
 )
+
+func FuzzRecognizedHealthyBody(f *testing.F) {
+	f.Add(`{"healthy":true}`)
+	f.Add(`{"healthy":false}`)
+	f.Add(`{"status":"Healthy"}`)
+	f.Add(" Healthy\r\n")
+	f.Add("Not Healthy")
+	f.Add("<html>Healthy</html>")
+	f.Fuzz(func(t *testing.T, body string) {
+		var parsed struct {
+			Healthy *bool `json:"healthy"`
+		}
+		want := false
+		if err := json.Unmarshal([]byte(body), &parsed); err == nil {
+			want = parsed.Healthy != nil && *parsed.Healthy
+		} else {
+			want = strings.EqualFold(strings.TrimSpace(body), "Healthy")
+		}
+		if got := recognizedHealthyBody([]byte(body)); got != want {
+			t.Errorf("recognizedHealthyBody(%q) = %v, want %v", body, got, want)
+		}
+	})
+}
 
 func FuzzRetryDelay(f *testing.F) {
 	f.Add("")

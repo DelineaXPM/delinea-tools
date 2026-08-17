@@ -76,7 +76,7 @@ func ProbeBackend(ctx context.Context, cfg Config) (Backend, error) {
 	// other network path uses, so WithProbedTarget honors the ErrTransport /
 	// ErrTimeout contract (and the URL sanitizer). firstErr is non-nil here:
 	// reachable stays false only when every probe returned an error.
-	return BackendUnknown, classifyTransport(firstErr)
+	return BackendUnknown, classifyProbeTransport(firstErr, cfg.Header)
 }
 
 // probeClient builds the same transport New would — proxy environment, TLS
@@ -106,11 +106,9 @@ func probeClient(cfg Config) (*http.Client, func(), error) {
 	return client, func() {}, nil
 }
 
-// probeHealthy accepts a JSON body reporting healthy, or any body mentioning
-// Healthy at all, which is how Secret Server's plain-text health page answers.
-// A JSON body is authoritative only when it actually carries a healthy field;
-// any other JSON (e.g. {"status":"Healthy"}) falls through to the substring
-// rather than being read as an unhealthy verdict it never gave.
+// probeHealthy accepts a JSON object whose healthy field is true, or the exact
+// trimmed legacy plain-text value Healthy (case-insensitively). Valid JSON is
+// authoritative: a body without a healthy boolean is not a health verdict.
 func probeHealthy(ctx context.Context, client *http.Client, url string, header http.Header) (bool, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -134,13 +132,34 @@ func probeHealthy(ctx context.Context, client *http.Client, url string, header h
 	if err != nil {
 		return false, err
 	}
+	return recognizedHealthyBody(body), nil
+}
+
+func recognizedHealthyBody(body []byte) bool {
 	var parsed struct {
 		Healthy *bool `json:"healthy"`
 	}
-	if json.Unmarshal(body, &parsed) == nil && parsed.Healthy != nil {
-		return *parsed.Healthy, nil
+	if err := json.Unmarshal(body, &parsed); err == nil {
+		return parsed.Healthy != nil && *parsed.Healthy
 	}
-	return strings.Contains(string(body), "Healthy"), nil
+	return strings.EqualFold(strings.TrimSpace(string(body)), "Healthy")
+}
+
+// classifyProbeTransport preserves the engine's sentinel and underlying error
+// chain while removing configured routing-header values from the printable
+// diagnostic. A caller-supplied RoundTripper is arbitrary code and may echo a
+// request header in its returned error; probes deliberately send those headers.
+func classifyProbeTransport(err error, header http.Header) error {
+	classified := classifyTransport(err)
+	values := make([]string, 0, len(header))
+	for _, vv := range header {
+		values = append(values, vv...)
+	}
+	redact := buildRedactor(1, values, nil)
+	return &safeTransportDiagnostic{
+		message: redact(classified.Error()),
+		err:     classified,
+	}
 }
 
 // WithProbedTarget resolves TargetAuto by asking the server what it is, for
