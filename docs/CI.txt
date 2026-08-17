@@ -1,0 +1,89 @@
+delinea-tools — CI/CD integration
+==================================
+
+How a pipeline uses delinea-util to fetch Delinea secrets at build/deploy time.
+Two delivery shapes cover almost every case:
+
+  - Scoped injection: "secrets run NAME=field#id -- <command>" runs one command
+    with the secret in its environment only. Nothing is written to disk, exported
+    to later steps, or placed on argv, and the tool exec-replaces itself so it
+    does not linger. Use this when the thing that needs the secret is a command
+    you can wrap.
+  - Cross-step / cross-tool export: "secrets print --via <mode>" writes the
+    secret where a later step, an eval, or a third-party action can read it.
+
+The vault credential comes from the environment or stdin, never argv. Mappings
+name the secret's field and id (NAME=field#id) or path (NAME=field@\folder\path)
+— references, not the value. Exit codes are stable for scripting: 0 success,
+1 usage/config, 2 auth/vault, 3 transport, 4 non-2xx.
+
+
+GITHUB ACTIONS
+--------------
+
+Get the tool with go run (no install) or install it once onto PATH:
+
+    go run github.com/DelineaXPM/delinea-tools/cmd/delinea-util@v0.1.0 ...
+    # or: go install github.com/DelineaXPM/delinea-tools/cmd/delinea-util@v0.1.0
+
+Set DELINEA_TOOLS_URL and one credential from your repository secrets (a
+Secret Server username/password pair, a Platform CLIENT_ID/CLIENT_SECRET, or a
+pre-obtained DELINEA_TOOLS_TOKEN).
+
+Scoped injection — the secret stays inside one command:
+
+    - name: run a migration with the DB password injected
+      env:
+        DELINEA_TOOLS_URL: ${{ secrets.SS_URL }}
+        DELINEA_TOOLS_USERNAME: ${{ secrets.SS_USERNAME }}
+        DELINEA_TOOLS_PASSWORD: ${{ secrets.SS_PASSWORD }}
+      run: |
+        delinea-util secrets run PGPASSWORD=password#128 -- \
+          psql -h db.internal -U app -c 'select 1'
+
+Cross-step export — put the secret in $GITHUB_ENV for later steps. delinea-util
+emits ::add-mask:: first, so GitHub redacts the value in the logs:
+
+    - name: load a secret for later steps
+      env: { DELINEA_TOOLS_URL: ..., DELINEA_TOOLS_USERNAME: ..., DELINEA_TOOLS_PASSWORD: ... }
+      run: delinea-util secrets print --via github-env --out "$GITHUB_ENV" APP_SECRET=password#128
+    - name: a later step / action uses it
+      run: deploy --token "$APP_SECRET"
+
+Choose "run" for the tightest scope (nothing masked because nothing is printed);
+choose "--via github-env" when a later step or an action you cannot wrap needs
+the value (broader, but masked in logs). A runnable version of both, exercised
+against a test tenant, lives in .github/workflows/consumer-example.yml.
+
+
+GITLAB CI
+---------
+
+Scoped injection is the same:
+
+    deploy:
+      script:
+        - delinea-util secrets run PGPASSWORD=password#128 -- ./deploy.sh
+
+Or export into the job's shell with --via sh and eval, when several later
+commands need the values:
+
+    deploy:
+      script:
+        - eval "$(delinea-util secrets print --via sh APP_SECRET=password#128)"
+        - deploy --token "$APP_SECRET"
+
+There is deliberately no dotenv/artifact delivery: a GitLab dotenv report is
+uploaded to the server and readable by pipeline users. Fetch secrets in the
+consuming job instead, as above.
+
+
+ANY CI / SHELL
+--------------
+
+The same two shapes work anywhere delinea-util runs: "secrets run -- <cmd>" to
+scope a secret to one process, or "eval \"$(delinea-util secrets print --via sh
+...)\"" to load several into the current shell. For a file, use
+"secrets print --via raw --out FILE" (mode 0600, written only on success) or
+"secrets template --in FILE" to render a config from a Go text/template. Check a
+configuration without fetching a value with "delinea-util check".

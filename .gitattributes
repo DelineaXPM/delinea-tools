@@ -1,0 +1,4 @@
+# Check out text files with LF on every platform so embedded content (e.g.
+# cmd/delinea-util/README.txt, which go:embed carries verbatim) matches
+# newline-for-newline on Windows CI, and so no CRLF creeps into Go sources.
+* text=auto eol=lf

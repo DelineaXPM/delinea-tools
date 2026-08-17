@@ -1,0 +1,61 @@
+name: e2e
+
+# The live end-to-end suite is the only thing that catches Delinea changing an
+# API underneath us — the offline suite pins our own expected shapes and cannot.
+# It runs on a schedule (upstream can change with no commit here) and on demand,
+# against a throwaway test tenant supplied through repository secrets. Every
+# local and fork runs skip cleanly when fixtures are absent. This configured
+# scheduled job opts into strict mode (DELINEA_TOOLS_TEST_REQUIRE_E2E below), so
+# a deleted or misspelled repository secret fails the suite instead of silently
+# removing its coverage — the fixtures are provisioned as repository secrets.
+
+on:
+  schedule:
+    - cron: "17 6 * * 1" # Mondays 06:17 UTC
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: go test -tags e2e
+        env:
+          # Strict mode: the DELINEA_TOOLS_TEST_* repository secrets are
+          # provisioned, so a deleted or misspelled secret fails the suite
+          # rather than silently skipping and dropping live coverage.
+          DELINEA_TOOLS_TEST_REQUIRE_E2E: "1"
+          DELINEA_TOOLS_TEST_SS_URL: ${{ secrets.DELINEA_TOOLS_TEST_SS_URL }}
+          DELINEA_TOOLS_TEST_SS_USERNAME: ${{ secrets.DELINEA_TOOLS_TEST_SS_USERNAME }}
+          DELINEA_TOOLS_TEST_SS_PASSWORD: ${{ secrets.DELINEA_TOOLS_TEST_SS_PASSWORD }}
+          DELINEA_TOOLS_TEST_SS_SECRET_ID: ${{ secrets.DELINEA_TOOLS_TEST_SS_SECRET_ID }}
+          DELINEA_TOOLS_TEST_SS_SECRET_PATH: ${{ secrets.DELINEA_TOOLS_TEST_SS_SECRET_PATH }}
+          DELINEA_TOOLS_TEST_SS_SECRET_FIELD: ${{ secrets.DELINEA_TOOLS_TEST_SS_SECRET_FIELD }}
+          DELINEA_TOOLS_TEST_SS_SECRET_VALUE: ${{ secrets.DELINEA_TOOLS_TEST_SS_SECRET_VALUE }}
+          DELINEA_TOOLS_TEST_SS_FOLDER_ID: ${{ secrets.DELINEA_TOOLS_TEST_SS_FOLDER_ID }}
+          DELINEA_TOOLS_TEST_SS_SITE_ID: ${{ secrets.DELINEA_TOOLS_TEST_SS_SITE_ID }}
+          DELINEA_TOOLS_TEST_SS_TEMPLATE_ID: ${{ secrets.DELINEA_TOOLS_TEST_SS_TEMPLATE_ID }}
+          DELINEA_TOOLS_TEST_PLATFORM_URL: ${{ secrets.DELINEA_TOOLS_TEST_PLATFORM_URL }}
+          DELINEA_TOOLS_TEST_PLATFORM_CLIENT_ID: ${{ secrets.DELINEA_TOOLS_TEST_PLATFORM_CLIENT_ID }}
+          DELINEA_TOOLS_TEST_PLATFORM_CLIENT_SECRET: ${{ secrets.DELINEA_TOOLS_TEST_PLATFORM_CLIENT_SECRET }}
+          DELINEA_TOOLS_TEST_PLATFORM_SECRET_ID: ${{ secrets.DELINEA_TOOLS_TEST_PLATFORM_SECRET_ID }}
+          DELINEA_TOOLS_TEST_PLATFORM_SECRET_PATH: ${{ secrets.DELINEA_TOOLS_TEST_PLATFORM_SECRET_PATH }}
+          DELINEA_TOOLS_TEST_PLATFORM_SECRET_FIELD: ${{ secrets.DELINEA_TOOLS_TEST_PLATFORM_SECRET_FIELD }}
+          DELINEA_TOOLS_TEST_PLATFORM_SECRET_VALUE: ${{ secrets.DELINEA_TOOLS_TEST_PLATFORM_SECRET_VALUE }}
+          DELINEA_TOOLS_TEST_PLATFORM_FOLDER_ID: ${{ secrets.DELINEA_TOOLS_TEST_PLATFORM_FOLDER_ID }}
+          DELINEA_TOOLS_TEST_SS_FILE_SECRET_ID: ${{ secrets.DELINEA_TOOLS_TEST_SS_FILE_SECRET_ID }}
+          DELINEA_TOOLS_TEST_SS_FILE_SECRET_FIELD: ${{ secrets.DELINEA_TOOLS_TEST_SS_FILE_SECRET_FIELD }}
+          DELINEA_TOOLS_TEST_SS_FILE_SHA256: ${{ secrets.DELINEA_TOOLS_TEST_SS_FILE_SHA256 }}
+          DELINEA_TOOLS_TEST_PLATFORM_FILE_SECRET_ID: ${{ secrets.DELINEA_TOOLS_TEST_PLATFORM_FILE_SECRET_ID }}
+          DELINEA_TOOLS_TEST_PLATFORM_FILE_SECRET_FIELD: ${{ secrets.DELINEA_TOOLS_TEST_PLATFORM_FILE_SECRET_FIELD }}
+          DELINEA_TOOLS_TEST_PLATFORM_FILE_SHA256: ${{ secrets.DELINEA_TOOLS_TEST_PLATFORM_FILE_SHA256 }}
+          DELINEA_TOOLS_TEST_PLATFORM_TEMPLATE_ID: ${{ secrets.DELINEA_TOOLS_TEST_PLATFORM_TEMPLATE_ID }}
+          DELINEA_TOOLS_TEST_PLATFORM_SITE_ID: ${{ secrets.DELINEA_TOOLS_TEST_PLATFORM_SITE_ID }}
+        run: go test -count=1 -tags e2e ./...

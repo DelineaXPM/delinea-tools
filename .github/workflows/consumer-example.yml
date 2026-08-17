@@ -1,0 +1,69 @@
+name: consumer-example
+
+# A runnable example of how a consuming repo uses delinea-util in CI to fetch a
+# secret from Delinea Secret Server, in the two delivery shapes a pipeline uses.
+# It authenticates to the live test tenant through repository secrets, so it runs
+# on a schedule and on demand only — never on PRs (forks have no secrets).
+#
+# This file dogfoods the CLI from source (go run ./cmd/delinea-util). An external
+# consumer would instead run, with no checkout:
+#     go run github.com/DelineaXPM/delinea-tools/cmd/delinea-util@v0.1.0 ...
+#   or `go install github.com/DelineaXPM/delinea-tools/cmd/delinea-util@v0.1.0`
+#   once and call `delinea-util` from PATH.
+#
+# The Delinea Platform is identical with DELINEA_TOOLS_CLIENT_ID and
+# DELINEA_TOOLS_CLIENT_SECRET in place of the username/password pair.
+on:
+  schedule:
+    - cron: "31 6 * * 1" # Mondays 06:31 UTC (staggered from the e2e job)
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+env:
+  # A consumer sets these from their own secrets. Username+password infers the
+  # Secret Server target; the credential is read from the environment, never argv.
+  DELINEA_TOOLS_URL: ${{ secrets.DELINEA_TOOLS_TEST_SS_URL }}
+  DELINEA_TOOLS_USERNAME: ${{ secrets.DELINEA_TOOLS_TEST_SS_USERNAME }}
+  DELINEA_TOOLS_PASSWORD: ${{ secrets.DELINEA_TOOLS_TEST_SS_PASSWORD }}
+  # The secret to fetch: field name + numeric id (references, not the value) and
+  # the expected value, only for this example's assertions.
+  FIELD: ${{ secrets.DELINEA_TOOLS_TEST_SS_SECRET_FIELD }}
+  ID: ${{ secrets.DELINEA_TOOLS_TEST_SS_SECRET_ID }}
+  EXPECT: ${{ secrets.DELINEA_TOOLS_TEST_SS_SECRET_VALUE }}
+
+jobs:
+  # Pattern A — scoped injection. The secret lives only in the wrapped command's
+  # environment; it never touches $GITHUB_ENV, a later step, or disk.
+  run-form:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: inject a secret into one command
+        run: |
+          go run ./cmd/delinea-util secrets run "APP_SECRET=${FIELD}#${ID}" -- \
+            sh -c 'test -n "$APP_SECRET" && echo "child received APP_SECRET (len ${#APP_SECRET})"'
+
+  # Pattern B — cross-step export. Write the secret into $GITHUB_ENV so a *later*
+  # step or a third-party action can read it. delinea-util emits ::add-mask::
+  # first, so GitHub redacts the value everywhere in the logs.
+  github-env-form:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: export a secret to $GITHUB_ENV
+        run: |
+          go run ./cmd/delinea-util secrets print --via github-env --out "$GITHUB_ENV" \
+            "APP_SECRET=${FIELD}#${ID}"
+      - name: a later step reads it from the environment
+        run: |
+          [ "$APP_SECRET" = "$EXPECT" ] && echo "later step sees the expected secret (len ${#APP_SECRET})" || { echo "value mismatch"; exit 1; }

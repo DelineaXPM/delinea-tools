@@ -1,0 +1,54 @@
+name: quality
+
+on:
+  schedule:
+    - cron: "43 5 * * 3" # Wednesdays 05:43 UTC
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  stress:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: shuffled repeated suite
+        run: go test -shuffle=on -count=10 ./...
+
+  fuzz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - package: ./api
+            target: FuzzRetryDelay
+          - package: ./api
+            target: FuzzValidateVaultURL
+          - package: ./api
+            target: FuzzValidateGrant
+          - package: ./cmd/delinea-util
+            target: FuzzParseArgs
+          - package: ./cmd/delinea-util
+            target: FuzzParseHeaders
+          - package: ./cmd/delinea-util
+            target: FuzzReadSecretStdin
+          - package: ./secrets
+            target: FuzzParseMapping
+          - package: ./secrets/retrievejson
+            target: FuzzParse
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: fuzz ${{ matrix.target }}
+        run: go test "${{ matrix.package }}" -run '^$' -fuzz '^${{ matrix.target }}$' -fuzztime=30s
