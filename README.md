@@ -81,7 +81,15 @@ proxy), `Header` (gateway headers), `CACert` / `AllowedVaultHosts`, and
 
 Long-running programs should reuse clients. A program that intentionally
 discards a client can call `CloseIdleConnections` first to release its private
-connection pool promptly.
+connection pool promptly. Platform vault routes are cached per vault ID for five
+minutes, then refreshed synchronously and revalidated against the same host trust
+policy before another request is routed through them.
+
+The engine replays only safe reads: a reused bearer token rejected with 401 is
+evicted and a GET/HEAD is attempted once with a fresh grant. Writes and 403
+responses are never replayed. `Config.Retries` counts total attempts; the exact
+retry, `Retry-After`, and progress-timeout contract is recorded in
+[`docs/api-contracts.md`](docs/api-contracts.md).
 
 Docs:
 

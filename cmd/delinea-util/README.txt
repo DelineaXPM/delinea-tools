@@ -195,6 +195,9 @@ the platform, on a fixed allowlist of Delinea cloud vault domains
 or explicitly allow-listed with --vault-allow / DELINEA_TOOLS_VAULT_ALLOW. On-prem
 vault hosts must be allow-listed. The secrets group applies the same trust
 policy when it routes Platform fetches through the vault.
+The route is held for five minutes; the next request then refreshes it
+synchronously through the broker and reapplies the trust policy. If refresh
+fails, the request fails rather than using expired routing data.
 
 TOKEN REUSE
 -----------
@@ -387,6 +390,9 @@ Both the credential and the mappings are optional:
     partial credential fails even when no mappings were supplied. The credential
     is deliberately not sent when the target contradicts the service the probe
     found, or when the host is unreachable; both are reported instead.
+    A backend is selected only by 2xx JSON with healthy:true or the exact trimmed
+    legacy text Healthy (case-insensitive), never by an HTML/error page that
+    merely contains that word.
   - --no-auth keeps the credential out of every request: configuration and
     reachability are still checked, and the credential section reports the
     skip. It does not read credential stdin, even with --secret-stdin. A

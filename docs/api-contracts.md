@@ -44,11 +44,51 @@ request: `GET /api/v1/users/current` for Secret Server or
 service, callers using a pre-obtained token with `Authenticate` must set
 `Config.Target` explicitly.
 
+## Authenticated request recovery — `api/client.go`
+
+- A reused token rejected with 401 is evicted. GET and HEAD are granted a new
+  token and replayed once; mutating methods are never replayed.
+- A token first granted during the current call is not replayed when rejected:
+  it is already current, so another grant cannot repair the request.
+- A 403 is resource authorization and is returned unchanged. It neither evicts
+  the token nor replays the request. This follows OAuth bearer semantics:
+  `invalid_token` uses 401, while `insufficient_scope` uses 403
+  ([RFC 6750 section 3.1](https://www.rfc-editor.org/rfc/rfc6750#section-3.1)).
+
+The strict live suite verifies that deliberately invalid bearer tokens receive
+401 from both supported product paths. Expired, revoked, wrong-audience, and
+proxy-normalized responses remain first-release manual QA cases; if a supported
+deployment reports one as 403, recovery must key on an authoritative token-error
+signal rather than treating every 403 as stale authentication.
+
+## Timeouts and retries — `api/client.go`, `api/auth.go`
+
+- `Config.Retries` is an attempt count: values below 1 select the default of
+  three; 1 disables retries.
+- API retries are limited to GET and HEAD. Transport errors, timeouts, and
+  408/429/500/502/503/504 are retriable. Writes are never replayed.
+- Token grants use the same attempt budget for transport failures and those
+  transient statuses. A completed non-transient authentication answer is
+  authoritative and is never retried.
+- Exponential fallback backoff starts at 200 ms. Fallback and custom backoff are
+  clamped to 30 seconds.
+- `Retry-After` accepts delta-seconds or an HTTP date up to 30 seconds. A longer
+  server-requested delay returns the current outcome immediately rather than
+  sleeping, retrying, or substituting fallback backoff.
+- `Config.Timeout` defaults to 30 seconds and independently bounds response
+  headers, the start of body consumption, and each blocked body read. It is an
+  idle/progress limit, not a total duration: a continuously flowing response may
+  run longer.
+
 ## Vault broker (Platform) — `api/vault.go`
 
 - `GET {URL}/vaultbroker/api/vaults`
 - Response: `{"vaults":[{ "vaultId","name","type","isDefault","isGlobalDefault","isActive","connection":{"url"} }]}`
 - We select the first vault with `isDefault && isActive` and route vault calls to `connection.url`.
+- A selected route is memoized per vault ID for five minutes. After expiry the
+  next caller synchronously refreshes it; concurrent callers for that ID share
+  one lookup. Refresh failure is returned rather than using expired routing
+  data. Different vault IDs refresh independently.
 - **Trust policy** (the broker URL is untrusted input): must be https, no
   userinfo/query/fragment, host must be same-origin with the platform, on the
   cloud-domain allowlist, or explicitly allowed via `AllowedVaultHosts` /
@@ -90,9 +130,12 @@ path needs a human mailbox). Highest drift risk.
 ## Health probe — `api/probe.go`
 
 - `GET {URL}/api/v1/healthcheck` (Secret Server), then `GET {URL}/health` (Platform)
-- Only a 2xx response can be healthy. Its body must be JSON
-  `{"healthy":true}` **or** contain the substring `Healthy`. The probe sends no
-  credential and follows no redirects.
+- Only a 2xx response can be healthy. Its body must be valid JSON containing a
+  `healthy` boolean whose value is true, or the exact trimmed legacy text
+  `Healthy` compared case-insensitively. Other JSON, `Not Healthy`, HTML, and
+  arbitrary text containing that word are not health verdicts. The probe sends
+  no credential, follows no redirects, and redacts configured routing-header
+  values from transport diagnostics.
 
 ## Not pinned (caller-owned via `api.Do`)
 

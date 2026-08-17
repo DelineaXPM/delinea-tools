@@ -16,7 +16,8 @@ TARGETS AND AUTHENTICATION
     set, or named explicitly with --target ss|platform.
   - Probe-driven target selection: Config.WithProbedTarget resolves an unset
     target with one credential-free health probe, for the single-credential-pair
-    integration shape.
+    integration shape. Only an authoritative healthy JSON boolean or the exact
+    legacy text Healthy selects a backend.
   - Pre-obtained bearer tokens are accepted directly, skipping the grant.
   - Interactive MFA login (delinea-util token --interactive): walks the Platform
     Identity API (password plus whatever second factor the account offers -- an
@@ -39,6 +40,7 @@ THE CLI (delinea-util)
     and headers), -v/--verbose (request/response summary on stderr).
   - Platform vault routing: --vault discovers the default vault through the
     broker and sends the request there; --vault-id targets a specific vault.
+    Discovered routes refresh after five minutes and are revalidated before use.
   - Self-documenting: help, --readme, --tree, --version.
   - Predictable exit codes shared across the raw verbs, the secrets group, and
     check:
@@ -164,7 +166,8 @@ TOKEN LIFECYCLE AND PERFORMANCE
     grant — and one failed attempt — rather than one per caller racing the
     account toward lockout.
   - A 401 on a cached token evicts it and replays GET/HEAD on a fresh grant;
-    mutating requests are never replayed.
+    mutating requests are never replayed. A 403 is resource authorization and
+    neither evicts the token nor replays the request.
   - The one-shot CLI opts out of the shared cache (it never reads it); a
     long-lived embedding service keeps it (the default).
 

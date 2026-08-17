@@ -51,7 +51,8 @@ Attachment fixtures:
   DELINEA_TOOLS_TEST_SS_FILE_SECRET_FIELD  slug of that file field
   DELINEA_TOOLS_TEST_SS_FILE_SHA256        hexadecimal SHA-256 of its downloaded bytes
 
-Exercised: backend probing and target inference; the password grant;
+Exercised: backend probing and target inference; the password grant; rejection
+of a deliberately invalid bearer token with HTTP 401;
 GET /api/v1/users/current through the library and the CLI; non-2xx exit-code
 behavior; token reuse via DELINEA_TOOLS_TOKEN; validation of a pre-obtained token;
 a wrong-password grant rejection; authenticated and reachability-only check;
@@ -83,6 +84,7 @@ Attachment and secret-write fixtures:
   DELINEA_TOOLS_TEST_PLATFORM_SITE_ID            vault site id for create/delete (usually 1)
 
 Exercised: backend probing and target inference; the client-credentials grant;
+rejection of a deliberately invalid bearer token with HTTP 401;
 pre-obtained-token validation and reuse; vault discovery via the broker;
 --vault routing of GET /api/v1/secrets/<id> to the discovered vault;
 authenticated and reachability-only check; the secrets library and built

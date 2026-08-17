@@ -236,3 +236,39 @@ func TestE2EPreobtainedTokenAuthentication(t *testing.T) {
 		})
 	}
 }
+
+// Invalid bearer tokens must be distinguished from resource authorization.
+// The engine evicts and refreshes reused tokens on 401, while a 403 is returned
+// as an insufficient-permission answer and deliberately does not trigger a
+// grant. Keep both supported product paths pinned to that contract.
+func TestE2EInvalidBearerIsUnauthorized(t *testing.T) {
+	tests := []struct {
+		name   string
+		cfg    func(*testing.T) Config
+		target Target
+		path   string
+	}{
+		{"secret-server", ssConfig, TargetSecretServer, "/api/v1/users/current"},
+		{"platform", platformConfig, TargetPlatform, "/vaultbroker/api/vaults"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			base := tt.cfg(t)
+			client, err := New(Config{
+				URL: base.URL, Target: tt.target,
+				Token: "delinea-tools-deliberately-invalid-token", Timeout: time.Minute,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			resp, err := client.Do(context.Background(), Request{Method: http.MethodGet, Path: tt.path})
+			if err != nil {
+				t.Fatal(err)
+			}
+			resp.Body.Close()
+			if resp.StatusCode != http.StatusUnauthorized {
+				t.Errorf("invalid bearer status = %d, want 401", resp.StatusCode)
+			}
+		})
+	}
+}

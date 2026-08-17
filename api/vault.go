@@ -91,12 +91,13 @@ func (c *Client) Vaults(ctx context.Context) ([]Vault, error) {
 	return vr.Vaults, nil
 }
 
-// VaultURLByID discovers, validates, and temporarily memoizes the URL of a specific vault
-// by its vaultId, for callers that must reach a non-default vault. The URL is
-// held to the same trust policy as the default. An empty id is refused rather
-// than read as "the default": a caller passing through an unset configured ID
-// must learn the configuration is incomplete, not silently route to the wrong
-// vault (VaultURL is the way to ask for the default).
+// VaultURLByID discovers, validates, and memoizes the URL of a specific vault
+// by its vaultId for five minutes, for callers that must reach a non-default
+// vault. The URL is held to the same refresh and trust policy as the default.
+// An empty id is refused rather than read as "the default": a caller passing
+// through an unset configured ID must learn the configuration is incomplete,
+// not silently route to the wrong vault (VaultURL is the way to ask for the
+// default).
 func (c *Client) VaultURLByID(ctx context.Context, id string) (*url.URL, error) {
 	if id == "" {
 		return nil, fmt.Errorf("%w: vault id is required; use VaultURL for the default vault", ErrConfig)
