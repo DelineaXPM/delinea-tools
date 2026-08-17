@@ -365,9 +365,11 @@ func TestGrantPanicDoesNotWedgeClient(t *testing.T) {
 func TestWaiterDoesNotInheritLeaderContextCancel(t *testing.T) {
 	var grants atomic.Int64
 	proceed := make(chan struct{})
+	leaderStarted := make(chan struct{})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/oauth2/token" {
 			if grants.Add(1) == 1 {
+				close(leaderStarted)
 				<-proceed // hold the first (leader's) grant until its ctx cancels
 			}
 			fmt.Fprint(w, grantJSON("test-token"))
@@ -384,12 +386,12 @@ func TestWaiterDoesNotInheritLeaderContextCancel(t *testing.T) {
 	leaderCtx, cancelLeader := context.WithCancel(context.Background())
 	leaderDone := make(chan struct{})
 	go func() { c.Token(leaderCtx); close(leaderDone) }() // becomes the granter, blocks
-	time.Sleep(30 * time.Millisecond)
+	<-leaderStarted
 
 	// A waiter with a healthy context coalesces onto the leader.
 	waiterDone := make(chan error, 1)
 	go func() { _, e := c.Token(context.Background()); waiterDone <- e }()
-	time.Sleep(30 * time.Millisecond)
+	waitForGrantWaiters(t, c, 1)
 
 	cancelLeader() // the leader's grant now fails on its cancelled context
 	<-leaderDone   // let the leader finish and publish its failure
@@ -412,9 +414,11 @@ func TestWaiterDoesNotInheritLeaderContextCancel(t *testing.T) {
 func TestConcurrentWaitersBoundGrantsOnLeaderCancel(t *testing.T) {
 	var grants atomic.Int64
 	proceed := make(chan struct{})
+	leaderStarted := make(chan struct{})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/oauth2/token" {
 			if grants.Add(1) == 1 {
+				close(leaderStarted)
 				<-proceed // hold the leader's grant until its ctx cancels
 			}
 			fmt.Fprint(w, grantJSON("test-token"))
@@ -431,14 +435,14 @@ func TestConcurrentWaitersBoundGrantsOnLeaderCancel(t *testing.T) {
 	leaderCtx, cancelLeader := context.WithCancel(context.Background())
 	leaderDone := make(chan struct{})
 	go func() { c.Token(leaderCtx); close(leaderDone) }()
-	time.Sleep(30 * time.Millisecond)
+	<-leaderStarted
 
 	const waiters = 20
 	got := make(chan error, waiters)
 	for range waiters {
 		go func() { _, e := c.Token(context.Background()); got <- e }()
 	}
-	time.Sleep(30 * time.Millisecond) // let every waiter coalesce onto the leader
+	waitForGrantWaiters(t, c, waiters)
 
 	cancelLeader()
 	<-leaderDone

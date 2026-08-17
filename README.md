@@ -64,12 +64,25 @@ explicitly accepted plaintext transport on a trusted network.
 
 ```go
 // Resolve secret fields (Secret Server or, with Target: api.TargetPlatform, the vault).
-c, _ := secrets.New(secrets.Config{URL: url, Username: user, Password: pw})
+c, err := secrets.New(secrets.Config{URL: url, Username: user, Password: pw})
+if err != nil {
+    log.Fatal(err)
+}
 vars, err := c.Resolve(ctx, []secrets.Mapping{{EnvName: "DB_PASS", SecretID: 126, Field: "password"}})
+if err != nil {
+    log.Fatal(err)
+}
 
 // Or reach any endpoint directly (search, create, update, delete, folders).
-ac, _ := api.New(api.Config{URL: url, Username: user, Password: pw})
+ac, err := api.New(api.Config{URL: url, Username: user, Password: pw})
+if err != nil {
+    log.Fatal(err)
+}
 resp, err := ac.Do(ctx, api.Request{Method: "GET", Path: "/api/v1/secrets/126"})
+if err != nil {
+    log.Fatal(err)
+}
+defer resp.Body.Close()
 ```
 
 Embedders can share one authenticated client and its token cache across both

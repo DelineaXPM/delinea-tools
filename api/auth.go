@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 	"unicode"
@@ -423,7 +424,7 @@ func (c *Client) grantOnce(ctx context.Context, endpoint string, form url.Values
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	resp, err := c.hc.Do(req)
 	if err != nil {
-		return grantResponse{}, 0, "", classifyTransport(fmt.Errorf("requesting token: %w", err))
+		return grantResponse{}, 0, "", c.transportErrorClassifier(1, nil)(fmt.Errorf("requesting token: %w", err))
 	}
 	defer resp.Body.Close()
 	body, oversized, err := readAuthResponse(resp.Body)
@@ -438,7 +439,7 @@ func (c *Client) grantOnce(ctx context.Context, endpoint string, form url.Values
 			return grantResponse{}, resp.StatusCode, resp.Header.Get("Retry-After"),
 				c.grantStatusError(resp.StatusCode, resp.Status, nil)
 		}
-		return grantResponse{}, 0, "", classifyTransport(fmt.Errorf("reading token response: %w", err))
+		return grantResponse{}, 0, "", c.transportErrorClassifier(1, nil)(fmt.Errorf("reading token response: %w", err))
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return grantResponse{}, resp.StatusCode, resp.Header.Get("Retry-After"),
@@ -541,8 +542,8 @@ func (c *Client) DiagnosticSnippet(body []byte) string {
 	return c.diagnosticFormatter()(body)
 }
 
-func (c *Client) diagnosticFormatter(responseTokens ...string) func([]byte) string {
-	redact := c.redactor(diagnosticRedactionFloor, responseTokens)
+func (c *Client) diagnosticFormatter(requestSecrets ...string) func([]byte) string {
+	redact := c.redactor(diagnosticRedactionFloor, requestSecrets)
 	return func(body []byte) string {
 		return snippet([]byte(redact(string(body))))
 	}
@@ -573,7 +574,15 @@ func (c *Client) redactText(s string, extra ...string) string {
 // Bearer tokens are always redacted; minCredentialLen applies only to the
 // configured password/client secret and extra answer-like values, where a
 // short dictionary word would otherwise corrupt ordinary diagnostics.
-func (c *Client) redactor(minCredentialLen int, responseTokens []string, extra ...string) func(string) string {
+func (c *Client) redactor(minCredentialLen int, requestSecrets []string, extra ...string) func(string) string {
+	unconditional, conditional := c.redactionValues(requestSecrets, extra...)
+	return buildRedactor(minCredentialLen, unconditional, conditional)
+}
+
+// redactionValues snapshots the secrets known to this client and request. It is
+// separate from building the replacement table so the transport classifier can
+// defer the more expensive encoded-variant construction until an error occurs.
+func (c *Client) redactionValues(requestSecrets []string, extra ...string) ([]string, []string) {
 	c.mu.Lock()
 	currentToken := c.token.AccessToken
 	c.mu.Unlock()
@@ -583,9 +592,26 @@ func (c *Client) redactor(minCredentialLen int, responseTokens []string, extra .
 	// disposable. Passwords, client secrets, and answer-like values retain the
 	// floor to avoid rewriting ordinary words.
 	unconditional := []string{c.cfg.Token, currentToken}
-	unconditional = append(unconditional, responseTokens...)
+	unconditional = append(unconditional, headerValues(c.cfg.Header)...)
+	unconditional = append(unconditional, requestSecrets...)
 	conditional := append([]string{c.cfg.Password, c.cfg.ClientSecret}, extra...)
-	return buildRedactor(minCredentialLen, unconditional, conditional)
+	return unconditional, conditional
+}
+
+// transportErrorClassifier binds credential redaction to one request while
+// preserving the classified error's unwrap chain. A custom RoundTripper or
+// response Body is arbitrary caller code and may echo headers, authorization,
+// grant fields, or an MFA answer in its error; only the printable diagnostic is
+// replaced, so errors.Is/errors.As still reach the original cause.
+func (c *Client) transportErrorClassifier(minCredentialLen int, requestSecrets []string, extra ...string) func(error) error {
+	unconditional, conditional := c.redactionValues(requestSecrets, extra...)
+	redactor := sync.OnceValue(func() func(string) string {
+		return buildRedactor(minCredentialLen, unconditional, conditional)
+	})
+	return func(err error) error {
+		classified := classifyTransport(err)
+		return &safeTransportDiagnostic{message: redactor()(classified.Error()), err: classified}
+	}
 }
 
 func buildRedactor(minCredentialLen int, unconditional, conditional []string) func(string) string {

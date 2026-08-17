@@ -292,14 +292,16 @@ func (r *Response) DiagnosticSnippet(body []byte) string {
 // path is one Store and one AddCleanup registration.
 type diagnosticBindings[T any] struct{ m sync.Map }
 
-func (b *diagnosticBindings[T]) bind(r *T, c *Client, responseToken string) {
+func (b *diagnosticBindings[T]) bind(r *T, c *Client, responseToken string, requestHeaderValues ...string) {
 	key := weak.Make(r)
 	b.m.Store(key, responseDiagnosticBinding{
-		responseToken:   responseToken,
-		configuredToken: c.cfg.Token,
-		password:        c.cfg.Password,
-		clientSecret:    c.cfg.ClientSecret,
-		client:          weak.Make(c),
+		responseToken:          responseToken,
+		configuredToken:        c.cfg.Token,
+		password:               c.cfg.Password,
+		clientSecret:           c.cfg.ClientSecret,
+		configuredHeaderValues: headerValues(c.cfg.Header),
+		requestHeaderValues:    slices.Clone(requestHeaderValues),
+		client:                 weak.Make(c),
 	})
 	runtime.AddCleanup(r, func(key weak.Pointer[T]) { b.m.Delete(key) }, key)
 }
@@ -322,11 +324,13 @@ var (
 )
 
 type responseDiagnosticBinding struct {
-	responseToken   string
-	configuredToken string
-	password        string
-	clientSecret    string
-	client          weak.Pointer[Client]
+	responseToken          string
+	configuredToken        string
+	password               string
+	clientSecret           string
+	configuredHeaderValues []string
+	requestHeaderValues    []string
+	client                 weak.Pointer[Client]
 }
 
 // diagnosticSnippet prefers the live client's formatter, so there is exactly
@@ -334,13 +338,17 @@ type responseDiagnosticBinding struct {
 // fallback where the client has been collected but the response still lives.
 func (b responseDiagnosticBinding) diagnosticSnippet(body []byte) string {
 	if c := b.client.Value(); c != nil {
-		out := c.diagnosticFormatter(b.responseToken)(body)
+		requestSecrets := append([]string{b.responseToken}, b.requestHeaderValues...)
+		out := c.diagnosticFormatter(requestSecrets...)(body)
 		runtime.KeepAlive(c)
 		return out
 	}
+	unconditional := []string{b.configuredToken, b.responseToken}
+	unconditional = append(unconditional, b.configuredHeaderValues...)
+	unconditional = append(unconditional, b.requestHeaderValues...)
 	redact := buildRedactor(
 		diagnosticRedactionFloor,
-		[]string{b.configuredToken, b.responseToken},
+		unconditional,
 		[]string{b.password, b.clientSecret},
 	)
 	return snippet([]byte(redact(string(body))))
@@ -829,7 +837,7 @@ func (c *Client) Do(ctx context.Context, r Request) (*Response, error) {
 		Header:     resp.Header,
 		Body:       resp.Body,
 	}
-	responseBindings.bind(result, c, responseBearerToken(resp))
+	responseBindings.bind(result, c, responseBearerToken(resp), headerValues(r.Header)...)
 	return result, nil
 }
 
@@ -910,7 +918,7 @@ func (c *Client) DoBufferedResponse(ctx context.Context, r Request, limit int64)
 		Header:     header,
 		Body:       body,
 	}
-	bufferedBindings.bind(resp, c, responseToken)
+	bufferedBindings.bind(resp, c, responseToken, headerValues(r.Header)...)
 	return resp, nil
 }
 
@@ -1190,6 +1198,8 @@ func (c *Client) attempt(ctx context.Context, method string, base *url.URL, r Re
 		timedOut.Store(true)
 		cancel()
 	})
+	requestSecrets := append([]string{tok}, headerValues(r.Header)...)
+	classify := c.transportErrorClassifier(diagnosticRedactionFloor, requestSecrets)
 	resp, err := c.hc.Do(req)
 	if err != nil {
 		watchdog.Stop()
@@ -1197,13 +1207,13 @@ func (c *Client) attempt(ctx context.Context, method string, base *url.URL, r Re
 		if timedOut.Load() {
 			return nil, fmt.Errorf("%w: no response headers within %s", ErrTimeout, c.timeout)
 		}
-		return nil, classifyTransport(err)
+		return nil, classify(err)
 	}
 	// The watchdog stays armed until the first Read, so a response whose body
 	// is never read or closed is still torn down within Timeout instead of
 	// pinning its context and pooled connection.
 	watchdog.Reset(c.timeout)
-	ib := &idleBody{rc: resp.Body, timer: watchdog, idle: c.timeout, cancel: cancel, timedOut: &timedOut}
+	ib := &idleBody{rc: resp.Body, timer: watchdog, idle: c.timeout, cancel: cancel, timedOut: &timedOut, classify: classify}
 	// A body read from and then dropped without Close leaves the timer
 	// stopped, so nothing else would ever release the connection; cancelling
 	// on unreachability is the backstop (cancel is idempotent, so a normal
@@ -1231,6 +1241,22 @@ func applyConfiguredHeader(req *http.Request, header http.Header) {
 		}
 		req.Header[ck] = append([]string(nil), vs...)
 	}
+}
+
+// headerValues returns a snapshot of every non-empty header value. Header
+// values are an authentication boundary in practice (gateway API keys and
+// routing tokens), so diagnostics treat all of them as secrets rather than
+// trying to maintain an incomplete list of sensitive header names.
+func headerValues(header http.Header) []string {
+	var values []string
+	for _, vv := range header {
+		for _, value := range vv {
+			if value != "" {
+				values = append(values, value)
+			}
+		}
+	}
+	return values
 }
 
 // setHostFromHeader honors a Host entry in the header map: net/http writes
@@ -1326,6 +1352,7 @@ type idleBody struct {
 	idle     time.Duration
 	cancel   context.CancelFunc
 	timedOut *atomic.Bool
+	classify func(error) error
 }
 
 func (b *idleBody) Read(p []byte) (int, error) {
@@ -1336,6 +1363,9 @@ func (b *idleBody) Read(p []byte) (int, error) {
 		return n, fmt.Errorf("%w: response body stalled for %s", ErrTimeout, b.idle)
 	}
 	if err != nil && !errors.Is(err, io.EOF) {
+		if b.classify != nil {
+			return n, b.classify(err)
+		}
 		return n, classifyTransport(err)
 	}
 	return n, err

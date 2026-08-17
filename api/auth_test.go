@@ -611,6 +611,41 @@ func TestDiagnosticSnippetRedactsRotatedToken(t *testing.T) {
 	}
 }
 
+func TestResponseDiagnosticRedactsOutboundHeaderValues(t *testing.T) {
+	const configuredSecret = "gateway-header-secret"
+	const requestSecret = "request-header-secret"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, "gateway=%s request=%s", r.Header.Get("X-Gateway-Key"), r.Header.Get("X-Request-Key"))
+	}))
+	defer srv.Close()
+
+	c, err := New(Config{
+		URL:    srv.URL,
+		Token:  "configured-bearer-token",
+		Header: http.Header{"X-Gateway-Key": {configuredSecret}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := c.DoBufferedResponse(context.Background(), Request{
+		Method: http.MethodGet,
+		Path:   "/reflect",
+		Header: http.Header{"X-Request-Key": {requestSecret}},
+	}, 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := resp.DiagnosticSnippet()
+	for _, secret := range []string{configuredSecret, requestSecret} {
+		if strings.Contains(got, secret) {
+			t.Errorf("response diagnostic exposed header value %q: %q", secret, got)
+		}
+	}
+	if !strings.Contains(got, "[REDACTED]") {
+		t.Errorf("response diagnostic did not show redaction: %q", got)
+	}
+}
+
 // BufferedResponse must not leak its request token through reflection-based
 // formatting: the redaction context lives in the weak registry, not in fields
 // a debug log's %+v would print. A copied value has no binding and fails
@@ -793,6 +828,26 @@ func TestGrantErrorRedactsSubmittedCredential(t *testing.T) {
 				t.Fatalf("credential reflection was not redacted: %v", err)
 			}
 		})
+	}
+}
+
+func TestGrantErrorRedactsReflectedConfiguredHeader(t *testing.T) {
+	const secret = "gateway-header-secret"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		fmt.Fprint(w, "gateway rejected "+r.Header.Get("X-Gateway-Key"))
+	}))
+	defer srv.Close()
+	c, err := New(Config{
+		URL: srv.URL, Username: "u", Password: "password-value", Retries: 1,
+		Header: http.Header{"X-Gateway-Key": {secret}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = c.Token(context.Background())
+	if err == nil || strings.Contains(err.Error(), secret) || !strings.Contains(err.Error(), "[REDACTED]") {
+		t.Fatalf("configured header reflection was not redacted: %v", err)
 	}
 }
 

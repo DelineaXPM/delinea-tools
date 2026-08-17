@@ -29,6 +29,8 @@ jobs:
       matrix:
         include:
           - package: ./api
+            target: FuzzRecognizedHealthyBody
+          - package: ./api
             target: FuzzRetryDelay
           - package: ./api
             target: FuzzValidateVaultURL
