@@ -278,11 +278,13 @@ via Config.Cache to scope the sharing, or set Config.DisableCache to opt
 out. A cached token is reused while it is inside 90%
 of its lifetime and clear of expiry by a minute (or a tenth of the lifetime,
 for tokens living under ten minutes); if the API rejects one with 401 it is
-evicted and a GET or HEAD request is retried once with a fresh grant. Mutating
-requests are returned as-is rather than replayed. A 403 is an authorization
-answer about the resource, not a stale token, and is also returned as-is. The cache
-keys on a digest of the credential, so changing a password or client secret
-invalidates its entry immediately. Custom TokenCache implementations are
+evicted and a GET or HEAD request is retried once with a fresh grant. Secret
+Server's exact expired-token 403 response receives the same treatment; all
+other 403 responses are authorization answers and remain untouched. Mutating
+requests are returned as-is rather than replayed, though an authoritative
+stale-token response evicts their token for the next call. The cache keys on a
+digest of the credential, so changing a password or client secret invalidates
+its entry immediately. Custom TokenCache implementations are
 possible, but they must be concurrent-safe and process-local: cache keys and
 live bearer tokens must never be persisted.
 

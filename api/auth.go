@@ -146,8 +146,9 @@ func (c *Client) forceGrant(ctx context.Context) (string, error) {
 
 // accessToken returns the bearer token to send. reused reports that the token
 // predates this call — memoized from an earlier grant or loaded from the
-// cache — which is what makes an evict-and-replay worthwhile on a 401: a
-// token granted within the same call cannot be stale.
+// cache — which is what makes an evict-and-replay worthwhile on an
+// authoritative stale-authentication response: a token granted within the
+// same call cannot be stale.
 //
 // The mutex is never held across the grant's network I/O and backoff sleeps:
 // concurrent callers coalesce onto one in-flight grant through c.granting,

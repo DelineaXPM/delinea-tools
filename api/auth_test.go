@@ -1068,8 +1068,9 @@ func TestDoDoesNotReplayPostWithReusedTokenOn401(t *testing.T) {
 	}
 }
 
-// A 403 is an authorization answer about the resource, not a stale token: it
-// must be returned as-is, without spending a grant or evicting the token.
+// An ordinary 403 is an authorization answer about the resource, not Secret
+// Server's exact expired-token signal: it must be returned as-is, without
+// spending a grant or evicting the token.
 func TestDoDoesNotReplayReusedTokenOn403(t *testing.T) {
 	grants := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

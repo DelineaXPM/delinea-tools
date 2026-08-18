@@ -237,10 +237,9 @@ func TestE2EPreobtainedTokenAuthentication(t *testing.T) {
 	}
 }
 
-// Invalid bearer tokens must be distinguished from resource authorization.
-// The engine evicts and refreshes reused tokens on 401, while a 403 is returned
-// as an insufficient-permission answer and deliberately does not trigger a
-// grant. Keep both supported product paths pinned to that contract.
+// Invalid bearer tokens must be distinguished from resource authorization and
+// from Secret Server's separately tested, exact expired-token 403. Both product
+// paths use 401 for an arbitrary invalid bearer.
 func TestE2EInvalidBearerIsUnauthorized(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -270,5 +269,45 @@ func TestE2EInvalidBearerIsUnauthorized(t *testing.T) {
 				t.Errorf("invalid bearer status = %d, want 401", resp.StatusCode)
 			}
 		})
+	}
+}
+
+// Secret Server intentionally returns its documented expired-token signal as
+// a 403 rather than the 401 used for an arbitrary invalid bearer. Expire only
+// the disposable token this client just obtained, then prove a cached client
+// recognizes that exact signal, grants again, and safely replays the read.
+func TestE2ESecretServerExpiredTokenRecovery(t *testing.T) {
+	cfg := ssConfig(t)
+	cfg.Cache = NewMemoryCache()
+	c, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	baseline, err := c.Do(context.Background(), Request{Method: http.MethodGet, Path: "/api/v1/users/current"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseline.Body.Close()
+	if baseline.StatusCode != http.StatusOK {
+		t.Fatalf("baseline status = %d, want 200", baseline.StatusCode)
+	}
+
+	expire, err := c.Do(context.Background(), Request{Method: http.MethodPost, Path: "/api/v1/oauth-expiration"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	expire.Body.Close()
+	if expire.StatusCode < 200 || expire.StatusCode > 299 {
+		t.Fatalf("token expiration status = %d, want 2xx", expire.StatusCode)
+	}
+
+	recovered, err := c.Do(context.Background(), Request{Method: http.MethodGet, Path: "/api/v1/users/current"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer recovered.Body.Close()
+	if recovered.StatusCode != http.StatusOK {
+		t.Fatalf("status after expiring cached token = %d, want 200 after re-grant", recovered.StatusCode)
 	}
 }

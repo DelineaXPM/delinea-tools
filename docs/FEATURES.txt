@@ -170,9 +170,11 @@ TOKEN LIFECYCLE AND PERFORMANCE
     grants per credential, so a burst of parallel first-time calls costs one
     grant — and one failed attempt — rather than one per caller racing the
     account toward lockout.
-  - A 401 on a cached token evicts it and replays GET/HEAD on a fresh grant;
-    mutating requests are never replayed. A 403 is resource authorization and
-    neither evicts the token nor replays the request.
+  - A 401 on a cached token evicts it and replays GET/HEAD on a fresh grant.
+    Secret Server's exact expired-token 403 does the same; every other 403 is
+    resource authorization and remains untouched. Mutating requests are never
+    replayed, but an authoritative stale-token response evicts their token so
+    the next call can grant afresh.
   - The one-shot CLI opts out of the shared cache (it never reads it); a
     long-lived embedding service keeps it (the default).
 

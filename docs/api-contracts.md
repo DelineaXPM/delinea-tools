@@ -49,18 +49,28 @@ service, callers using a pre-obtained token with `Authenticate` must set
 - A reused token rejected with 401 is evicted. GET and HEAD are granted a new
   token and replayed once; mutating methods are never replayed and never follow
   redirects, including same-origin 307/308 responses that preserve the body.
+- Secret Server's documented token-expiration operation produces a distinct
+  stale-authentication response: 403 with a bounded JSON object containing only
+  `{"message":"Authentication failed or expired token."}`. A reused token
+  receiving that exact response is also evicted; GET/HEAD are eligible for one
+  replay and mutations are returned without replay after eviction. The streamed
+  response classifier restores every byte it inspects before returning a
+  nonmatching or mutating response to the caller.
 - A token first granted during the current call is not replayed when rejected:
   it is already current, so another grant cannot repair the request.
-- A 403 is resource authorization and is returned unchanged. It neither evicts
-  the token nor replays the request. This follows OAuth bearer semantics:
-  `invalid_token` uses 401, while `insufficient_scope` uses 403
+- Every other 403 is resource authorization and is returned unchanged. It
+  neither evicts the token nor replays the request. This follows OAuth bearer
+  semantics: `invalid_token` uses 401, while `insufficient_scope` uses 403
   ([RFC 6750 section 3.1](https://www.rfc-editor.org/rfc/rfc6750#section-3.1)).
 
 The strict live suite verifies that deliberately invalid bearer tokens receive
-401 from both supported product paths. Expired, revoked, wrong-audience, and
-proxy-normalized responses remain first-release manual QA cases; if a supported
-deployment reports one as 403, recovery must key on an authoritative token-error
-signal rather than treating every 403 as stale authentication.
+401 from both supported product paths and that a Secret Server token invalidated
+through `POST /api/v1/oauth-expiration` is recovered through the exact 403 above.
+The 2026-08-18 manual matrix also recorded 401 for both wrong-audience directions.
+Platform natural expiration/revocation remains a manual QA case when it can be
+induced without disrupting shared tenant credentials or sessions. Any additional
+403 recovery must likewise key on an authoritative token-error signal rather than
+treating every 403 as stale authentication.
 
 ## Timeouts and retries — `api/client.go`, `api/auth.go`
 

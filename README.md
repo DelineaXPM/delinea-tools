@@ -105,9 +105,12 @@ minutes, then refreshed synchronously and revalidated against the same host trus
 policy before another request is routed through them.
 
 The engine replays only safe reads: a reused bearer token rejected with 401 is
-evicted and a GET/HEAD is attempted once with a fresh grant. Writes and 403
-responses are never replayed. `Config.Retries` counts total attempts; the exact
-retry, `Retry-After`, and progress-timeout contract is recorded in
+evicted and a GET/HEAD is attempted once with a fresh grant. It does the same
+for Secret Server's exact, documented expired-token 403 response; unrelated 403
+authorization responses remain untouched. Writes are never replayed, although
+an authoritative stale-token response evicts their rejected token for the next
+call. `Config.Retries` counts total attempts; the exact retry, `Retry-After`, and
+progress-timeout contract is recorded in
 [`docs/api-contracts.md`](docs/api-contracts.md).
 
 Docs:

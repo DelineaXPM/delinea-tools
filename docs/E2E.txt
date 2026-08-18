@@ -52,7 +52,8 @@ Attachment fixtures:
   DELINEA_TOOLS_TEST_SS_FILE_SHA256        hexadecimal SHA-256 of its downloaded bytes
 
 Exercised: backend probing and target inference; the password grant; rejection
-of a deliberately invalid bearer token with HTTP 401;
+of a deliberately invalid bearer token with HTTP 401; self-expiration of a
+disposable cached token and recovery from Secret Server's exact expired-token 403;
 GET /api/v1/users/current through the library and the CLI; non-2xx exit-code
 behavior; token reuse via DELINEA_TOOLS_TOKEN; validation of a pre-obtained token;
 a wrong-password grant rejection; authenticated and reachability-only check;
