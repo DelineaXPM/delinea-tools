@@ -46,7 +46,7 @@ func GlobalFlags() []Flag {
 		{Long: "timeout", Arg: "DUR", Desc: "per-request timeout, e.g. 30s ($DELINEA_TOOLS_TIMEOUT)"},
 		{Long: "retries", Arg: "N", Desc: "retry attempts for transient failures ($DELINEA_TOOLS_RETRIES)"},
 		{Long: "tls-skip-verify", Desc: "disable TLS certificate verification ($DELINEA_TOOLS_TLS_SKIP_VERIFY)"},
-		{Long: "vault-allow", Arg: "HOST", Desc: "additional allowed vault host, repeatable ($DELINEA_TOOLS_VAULT_ALLOW)"},
+		{Long: "vault-allow", Arg: "HOST", Desc: "additional allowed vault host or exact host:port, repeatable ($DELINEA_TOOLS_VAULT_ALLOW)"},
 		{Long: "secret-stdin", Desc: "read the credential secret from stdin instead of the environment"},
 	}
 }

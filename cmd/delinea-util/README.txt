@@ -193,8 +193,10 @@ without userinfo, query, or fragment, and its host must be same-origin with
 the platform, on a fixed allowlist of Delinea cloud vault domains
 (secretservercloud.com and its regional variants, devsecretservercloud.com),
 or explicitly allow-listed with --vault-allow / DELINEA_TOOLS_VAULT_ALLOW. On-prem
-vault hosts must be allow-listed. The secrets group applies the same trust
-policy when it routes Platform fetches through the vault.
+vault hosts must be allow-listed. A hostname entry trusts only HTTPS port 443;
+an alternate port must be listed as the exact host:port. Automatic trust for
+Delinea cloud vault domains is likewise limited to port 443. The secrets group
+applies the same trust policy when it routes Platform fetches through the vault.
 The route is held for five minutes; the next request then refreshes it
 synchronously through the broker and reapplies the trust policy. If refresh
 fails, the request fails rather than using expired routing data.

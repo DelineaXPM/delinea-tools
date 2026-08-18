@@ -92,7 +92,8 @@ signal rather than treating every 403 as stale authentication.
 - **Trust policy** (the broker URL is untrusted input): must be https, no
   userinfo/query/fragment, host must be same-origin with the platform, on the
   cloud-domain allowlist, or explicitly allowed via `AllowedVaultHosts` /
-  `--vault-allow`.
+  `--vault-allow`. Automatic cloud trust and a hostname-only explicit entry
+  cover port 443 only; an alternate port requires the exact `host:port`.
 - **Cloud-domain allowlist** (`delineaCloudVaultDomains`): `devsecretservercloud.com`,
   `secretservercloud.com`, `.eu`, `.com.au`, `.com.sg`, `.ca`, `.co.uk`, `.ae`.
   New Delinea cloud regions must be added here — but operators are never blocked

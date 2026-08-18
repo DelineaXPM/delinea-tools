@@ -293,10 +293,14 @@ func validateVaultURL(platform *url.URL, raw string, allowed []string) (*url.URL
 	if vu.RawQuery != "" || vu.ForceQuery || vu.Fragment != "" {
 		return nil, fmt.Errorf("%w: platform returned a vault URL containing a query or fragment", ErrVault)
 	}
-	if sameOrigin(platform, vu) || isDelineaCloudVaultHost(vu.Hostname()) || isAllowedVaultHost(vu, allowed) {
+	if sameOrigin(platform, vu) || isDelineaCloudVaultURL(vu) || isAllowedVaultHost(vu, allowed) {
 		return vu, nil
 	}
 	return nil, fmt.Errorf("%w: untrusted vault host %q; if this on-premises deployment is expected, allow it explicitly (AllowedVaultHosts; delinea-util --vault-allow or DELINEA_TOOLS_VAULT_ALLOW)", ErrVault, vu.Host)
+}
+
+func isDelineaCloudVaultURL(vu *url.URL) bool {
+	return effectivePort(vu) == "443" && isDelineaCloudVaultHost(vu.Hostname())
 }
 
 func sameOrigin(a, b *url.URL) bool {
@@ -334,7 +338,7 @@ func isAllowedVaultHost(vu *url.URL, allowed []string) bool {
 	hostname := strings.ToLower(strings.TrimSuffix(vu.Hostname(), "."))
 	for _, configured := range allowed {
 		a := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(configured), "."))
-		if a != "" && (a == host || a == hostname) {
+		if a != "" && (a == host || (a == hostname && effectivePort(vu) == "443")) {
 			return true
 		}
 	}

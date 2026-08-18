@@ -69,7 +69,8 @@ type Config struct {
 
 	// AllowedVaultHosts lists extra hosts trusted for a platform-discovered
 	// vault URL, for an on-premises vault that is neither same-origin with the
-	// platform nor on a Delinea cloud vault domain.
+	// platform nor on a Delinea cloud vault domain. A hostname without a port
+	// trusts only HTTPS port 443; list the exact host:port for another port.
 	AllowedVaultHosts []string
 }
 

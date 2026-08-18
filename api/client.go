@@ -163,7 +163,10 @@ type Config struct {
 	// arbitrary transport code may derive them from a request or response body.
 	Logger *slog.Logger `json:"-"`
 
-	AllowedVaultHosts []string // extra hosts trusted for discovered vault URLs
+	// AllowedVaultHosts lists extra hosts trusted for discovered vault URLs.
+	// A hostname without a port trusts only HTTPS port 443; trust an alternate
+	// port by listing the exact host:port.
+	AllowedVaultHosts []string
 }
 
 // defaultTokenCache backs Config.Cache == nil. One process-wide cache keyed
