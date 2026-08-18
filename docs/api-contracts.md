@@ -53,9 +53,11 @@ service, callers using a pre-obtained token with `Authenticate` must set
   stale-authentication response: 403 with a bounded JSON object containing only
   `{"message":"Authentication failed or expired token."}`. A reused token
   receiving that exact response is also evicted; GET/HEAD are eligible for one
-  replay and mutations are returned without replay after eviction. The streamed
-  response classifier restores every byte it inspects before returning a
-  nonmatching or mutating response to the caller.
+  replay and mutations are returned without replay after eviction. Because HTTP
+  omits response bodies for HEAD, a 403 HEAD is confirmed with one read-only
+  current-user GET using the same token before it is classified as stale. The
+  streamed response classifier restores every byte it inspects before returning
+  a nonmatching or mutating response to the caller.
 - A token first granted during the current call is not replayed when rejected:
   it is already current, so another grant cannot repair the request.
 - Every other 403 is resource authorization and is returned unchanged. It

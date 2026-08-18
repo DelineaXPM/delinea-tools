@@ -874,8 +874,9 @@ func (c *Client) Do(ctx context.Context, r Request) (*Response, error) {
 	var staleAuthentication bool
 	// The streaming finish only captures the response and never reads the body,
 	// except for the small, bounded inspection needed to distinguish Secret
-	// Server's expired-token 403 from ordinary resource authorization. The
-	// inspected bytes are restored before the response reaches the caller. It
+	// Server's expired-token 403 from ordinary resource authorization. A HEAD 403,
+	// whose body HTTP omits, is confirmed by one read-only current-user request.
+	// Inspected bytes are restored before the response reaches the caller. It
 	// closes any previously captured response, so a stale-authentication body is
 	// released before the re-auth replay overwrites it.
 	stream := func(response *http.Response) error {
@@ -885,7 +886,16 @@ func (c *Client) Do(ctx context.Context, r Request) (*Response, error) {
 		resp = response
 		staleAuthentication = response.StatusCode == http.StatusUnauthorized
 		if reused && c.target == TargetSecretServer && response.StatusCode == http.StatusForbidden {
-			staleAuthentication = secretServerExpiredTokenStream(response)
+			if method == http.MethodHead {
+				// A HEAD body is always empty. Release the first exchange before the
+				// confirmation request so a transport that serializes until Close
+				// cannot deadlock, then leave the caller a normal bodyless response.
+				response.Body.Close()
+				response.Body = http.NoBody
+				staleAuthentication = c.secretServerHeadTokenExpired(ctx, r, tok)
+			} else {
+				staleAuthentication = secretServerExpiredTokenStream(response)
+			}
 		}
 		return nil
 	}
@@ -919,13 +929,14 @@ func responseBearerToken(resp *http.Response) string {
 
 // deliver runs send once and, when a reused token drew an authoritative stale
 // authentication response, refreshes the token and runs it once more. That
-// response is either a 401 or Secret Server's exact expired-token 403 body;
-// ordinary 403 resource authorization is left untouched. The classification is
-// supplied by finish so Do can inspect and restore a streamed body while
-// DoBufferedResponse can inspect the bytes it already read. Like every other
-// automatic replay, stale-token recovery is limited to GET and HEAD. A mutation
-// rejected for stale authentication still evicts the token so the next call can
-// recover, but this call is never transmitted twice.
+// response is either a 401, Secret Server's exact expired-token 403 body, or a
+// HEAD 403 confirmed through the read-only current-user endpoint; ordinary 403
+// resource authorization is left untouched. The classification is supplied by
+// finish so Do can inspect and restore a streamed body while DoBufferedResponse
+// can inspect the bytes it already read. Like every other automatic replay,
+// stale-token recovery is limited to GET and HEAD. A mutation rejected for
+// stale authentication still evicts the token so the next call can recover, but
+// this call is never transmitted twice.
 func (c *Client) deliver(ctx context.Context, method string, base *url.URL, r Request, body []byte, tok string, reused bool, finish func(*http.Response) error, staleAuthentication func() bool) error {
 	err := c.send(ctx, method, base, r, tok, body, finish)
 	if !reused || !staleAuthentication() {
@@ -1012,6 +1023,29 @@ func secretServerExpiredTokenStream(resp *http.Response) bool {
 	return err == nil && secretServerExpiredTokenBody(body)
 }
 
+// secretServerHeadTokenExpired confirms a reused token after a HEAD receives
+// 403. HTTP deliberately omits HEAD response bodies, so the exact Secret Server
+// diagnostic cannot be classified from that response. A single read-only
+// current-user request with the same token supplies an authoritative 401 or the
+// bounded expired-token 403 without treating every HEAD authorization failure
+// as stale authentication. Probe failures leave the original 403 untouched.
+func (c *Client) secretServerHeadTokenExpired(ctx context.Context, original Request, tok string) bool {
+	probe := Request{Method: http.MethodGet, Path: currentUserPath, Header: original.Header}
+	resp, err := c.attempt(ctx, http.MethodGet, c.base, probe, tok, nil)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusUnauthorized {
+		return true
+	}
+	if resp.StatusCode != http.StatusForbidden {
+		return false
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, secretServerExpiredTokenBodyLimit+1))
+	return err == nil && secretServerExpiredTokenBody(body)
+}
+
 // DoBufferedResponse performs the request like Do but returns at most limit
 // response-body bytes, read within the retry loop, so a body read that fails
 // before that limit is retried on the same budget as a transport or status
@@ -1019,11 +1053,13 @@ func secretServerExpiredTokenStream(resp *http.Response) bool {
 // with. To classify Secret Server's bounded expired-token 403, the engine may
 // inspect up to secretServerExpiredTokenBodyLimit+1 bytes independently of the
 // returned limit; an error encountered only in that extra inspection does not
-// change the caller's completed bounded response. The body is returned already
-// read and the connection released. The response keeps credential-redaction
-// context bound to the exact request token, so rendering its body in a
-// diagnostic cannot leak another call's token. Callers that stream a large body
-// use Do instead; the secrets resolver and vault discovery use this.
+// change the caller's completed bounded response. A Secret Server HEAD receiving
+// 403 may make one read-only current-user request to confirm that bodyless
+// response before recovery. The body is returned already read and the connection
+// released. The response keeps credential-redaction context bound to the exact
+// request token, so rendering its body in a diagnostic cannot leak another
+// call's token. Callers that stream a large body use Do instead; the secrets
+// resolver and vault discovery use this.
 func (c *Client) DoBufferedResponse(ctx context.Context, r Request, limit int64) (*BufferedResponse, error) {
 	method, base, reqBody, tok, reused, err := c.prepare(ctx, r)
 	if err != nil {
@@ -1035,7 +1071,12 @@ func (c *Client) DoBufferedResponse(ctx context.Context, r Request, limit int64)
 	var responseToken string
 	var staleAuthentication bool
 	read := func(resp *http.Response) error {
-		defer resp.Body.Close()
+		bodyClosed := false
+		defer func() {
+			if !bodyClosed {
+				resp.Body.Close()
+			}
+		}()
 		// Capture the status before the body read, so a 401 whose body read
 		// then fails still surfaces status 401 for deliver's re-auth decision
 		// rather than being lost as a bare transport error.
@@ -1043,7 +1084,7 @@ func (c *Client) DoBufferedResponse(ctx context.Context, r Request, limit int64)
 		staleAuthentication = status == http.StatusUnauthorized
 		responseToken = responseBearerToken(resp)
 		readLimit := limit
-		inspectExpiredToken := reused && c.target == TargetSecretServer && status == http.StatusForbidden
+		inspectExpiredToken := reused && c.target == TargetSecretServer && status == http.StatusForbidden && method != http.MethodHead
 		if inspectExpiredToken && readLimit < secretServerExpiredTokenBodyLimit+1 {
 			readLimit = secretServerExpiredTokenBodyLimit + 1
 		}
@@ -1065,6 +1106,11 @@ func (c *Client) DoBufferedResponse(ctx context.Context, r Request, limit int64)
 		}
 		staleAuthentication = staleAuthentication ||
 			(inspectExpiredToken && rerr == nil && secretServerExpiredTokenBody(b))
+		if reused && c.target == TargetSecretServer && status == http.StatusForbidden && method == http.MethodHead {
+			resp.Body.Close()
+			bodyClosed = true
+			staleAuthentication = c.secretServerHeadTokenExpired(ctx, r, tok)
+		}
 		return nil
 	}
 	if err := c.deliver(ctx, method, base, r, reqBody, tok, reused, read, func() bool { return staleAuthentication }); err != nil {

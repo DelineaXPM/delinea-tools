@@ -232,6 +232,15 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
+type contextBlockingBody struct{ ctx context.Context }
+
+func (b *contextBlockingBody) Read([]byte) (int, error) {
+	<-b.ctx.Done()
+	return 0, b.ctx.Err()
+}
+
+func (*contextBlockingBody) Close() error { return nil }
+
 func TestDoRefusesCrossOriginRedirectAsConfig(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "https://elsewhere.example.com/x", http.StatusMovedPermanently)
@@ -1466,14 +1475,18 @@ func TestDoAbandonedBodyReleasedByGC(t *testing.T) {
 }
 
 func TestDoStalledBodyTimesOut(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write(make([]byte, 16))
-		w.(http.Flusher).Flush()
-		<-r.Context().Done()
-	}))
-	defer srv.Close()
+	rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Status:     "200 OK",
+			Proto:      "HTTP/1.1",
+			Header:     make(http.Header),
+			Body:       &contextBlockingBody{ctx: r.Context()},
+			Request:    r,
+		}, nil
+	})
 
-	c, err := New(Config{URL: srv.URL, Token: "test-token", Timeout: 100 * time.Millisecond, Retries: 1})
+	c, err := New(Config{URL: "https://example.com", Token: "test-token", Transport: rt, Timeout: 100 * time.Millisecond, Retries: 1})
 	if err != nil {
 		t.Fatal(err)
 	}

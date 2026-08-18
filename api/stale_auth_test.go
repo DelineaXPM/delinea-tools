@@ -7,10 +7,23 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 const expiredTokenJSON = `{"message":"Authentication failed or expired token."}`
+
+type closeReleaseBody struct {
+	io.Reader
+	once    sync.Once
+	release func()
+}
+
+func (b *closeReleaseBody) Close() error {
+	b.once.Do(b.release)
+	return nil
+}
 
 func TestSecretServerExpiredTokenBody(t *testing.T) {
 	tests := []struct {
@@ -289,5 +302,191 @@ func TestBufferedExpiredTokenInspectionDoesNotExpandCallerReadObligation(t *test
 	}
 	if grants != 1 || calls != 1 {
 		t.Errorf("grants=%d calls=%d, want one of each with no retry", grants, calls)
+	}
+}
+
+func TestReusedSecretServerExpiredTokenReplaysHead(t *testing.T) {
+	for _, buffered := range []bool{false, true} {
+		name := "streaming"
+		if buffered {
+			name = "buffered"
+		}
+		t.Run(name, func(t *testing.T) {
+			grants, heads, probes := 0, 0, 0
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/oauth2/token":
+					grants++
+					fmt.Fprint(w, grantJSON(fmt.Sprintf("tok-%d", grants)))
+				case currentUserPath:
+					probes++
+					if r.Header.Get("Authorization") == "Bearer tok-1" {
+						w.WriteHeader(http.StatusForbidden)
+						fmt.Fprint(w, expiredTokenJSON)
+						return
+					}
+					fmt.Fprint(w, "ok")
+				default:
+					heads++
+					if r.Method != http.MethodHead {
+						t.Errorf("method = %s, want HEAD", r.Method)
+					}
+					if r.Header.Get("Authorization") == "Bearer tok-1" {
+						w.WriteHeader(http.StatusForbidden)
+						fmt.Fprint(w, expiredTokenJSON) // net/http correctly omits this HEAD body
+						return
+					}
+					w.WriteHeader(http.StatusOK)
+				}
+			}))
+			defer srv.Close()
+
+			c, err := New(Config{URL: srv.URL, Username: "u", Password: "p", Cache: NewMemoryCache()})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := c.Token(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+
+			var status int
+			if buffered {
+				resp, err := c.DoBufferedResponse(context.Background(), Request{Method: http.MethodHead, Path: "/api/v1/thing"}, 0)
+				if err != nil {
+					t.Fatal(err)
+				}
+				status = resp.StatusCode
+			} else {
+				resp, err := c.Do(context.Background(), Request{Method: http.MethodHead, Path: "/api/v1/thing"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				resp.Body.Close()
+				status = resp.StatusCode
+			}
+			if status != http.StatusOK {
+				t.Errorf("status = %d, want 200 after re-grant", status)
+			}
+			if grants != 2 || heads != 2 || probes != 1 {
+				t.Errorf("grants=%d heads=%d probes=%d, want 2, 2, 1", grants, heads, probes)
+			}
+		})
+	}
+}
+
+func TestOrdinarySecretServerHead403DoesNotEvictOrReplay(t *testing.T) {
+	grants, heads, probes := 0, 0, 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/oauth2/token":
+			grants++
+			fmt.Fprint(w, grantJSON("token"))
+		case currentUserPath:
+			probes++
+			fmt.Fprint(w, "ok")
+		default:
+			heads++
+			w.WriteHeader(http.StatusForbidden)
+		}
+	}))
+	defer srv.Close()
+
+	c, err := New(Config{URL: srv.URL, Username: "u", Password: "p", Cache: NewMemoryCache()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Token(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := c.Do(context.Background(), Request{Method: http.MethodHead, Path: "/api/v1/denied"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("status = %d, want original 403", resp.StatusCode)
+	}
+	if grants != 1 || heads != 1 || probes != 1 {
+		t.Errorf("grants=%d heads=%d probes=%d, want 1, 1, 1", grants, heads, probes)
+	}
+}
+
+func TestHeadExpiredTokenConfirmationClosesResponseBeforeProbe(t *testing.T) {
+	for _, buffered := range []bool{false, true} {
+		name := "streaming"
+		if buffered {
+			name = "buffered"
+		}
+		t.Run(name, func(t *testing.T) {
+			gate := make(chan struct{}, 1)
+			grants, heads, probes := 0, 0, 0
+			rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				select {
+				case gate <- struct{}{}:
+				case <-r.Context().Done():
+					return nil, r.Context().Err()
+				}
+
+				status, responseBody := http.StatusOK, ""
+				switch r.URL.Path {
+				case "/oauth2/token":
+					grants++
+					responseBody = grantJSON(fmt.Sprintf("tok-%d", grants))
+				case currentUserPath:
+					probes++
+					status = http.StatusForbidden
+					responseBody = expiredTokenJSON
+				default:
+					heads++
+					if r.Header.Get("Authorization") == "Bearer tok-1" {
+						status = http.StatusForbidden
+					}
+				}
+				return &http.Response{
+					StatusCode:    status,
+					Status:        fmt.Sprintf("%d %s", status, http.StatusText(status)),
+					Proto:         "HTTP/1.1",
+					Header:        make(http.Header),
+					Body:          &closeReleaseBody{Reader: strings.NewReader(responseBody), release: func() { <-gate }},
+					ContentLength: int64(len(responseBody)),
+					Request:       r,
+				}, nil
+			})
+
+			c, err := New(Config{
+				URL: "https://example.com", Target: TargetSecretServer,
+				Username: "u", Password: "p", Transport: rt,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := c.Token(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			var status int
+			if buffered {
+				resp, err := c.DoBufferedResponse(ctx, Request{Method: http.MethodHead, Path: "/api/v1/thing"}, 0)
+				if err != nil {
+					t.Fatal(err)
+				}
+				status = resp.StatusCode
+			} else {
+				resp, err := c.Do(ctx, Request{Method: http.MethodHead, Path: "/api/v1/thing"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				status = resp.StatusCode
+				resp.Body.Close()
+			}
+			if status != http.StatusOK {
+				t.Errorf("status = %d, want 200 after confirmation and replay", status)
+			}
+			if grants != 2 || heads != 2 || probes != 1 {
+				t.Errorf("grants=%d heads=%d probes=%d, want 2, 2, 1", grants, heads, probes)
+			}
+		})
 	}
 }
