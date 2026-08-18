@@ -763,10 +763,20 @@ type noRedirectsKey struct{}
 var errRefusedRedirect = errors.New("redirect refused")
 
 // checkRedirect refuses cross-origin redirects, so a bearer token is never
-// replayed to another host, and refuses all redirects on token grants.
+// replayed to another host, refuses all redirects on token grants, and refuses
+// redirects for methods the client does not otherwise replay. A 307 or 308
+// preserves a request body, while a 301, 302, or 303 can issue a second request
+// after the first mutation was accepted; either behavior would violate the
+// guarantee that writes are transmitted only once.
 func checkRedirect(req *http.Request, via []*http.Request) error {
 	if req.Context().Value(noRedirectsKey{}) != nil {
 		return http.ErrUseLastResponse
+	}
+	if len(via) == 0 {
+		return fmt.Errorf("%w: redirect history is empty", errRefusedRedirect)
+	}
+	if method := via[0].Method; method != http.MethodGet && method != http.MethodHead {
+		return fmt.Errorf("%w: refusing to redirect %s because the request may have mutated server state", errRefusedRedirect, method)
 	}
 	if len(via) >= 10 {
 		return fmt.Errorf("%w: stopped after 10 redirects", errRefusedRedirect)

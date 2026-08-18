@@ -47,7 +47,8 @@ service, callers using a pre-obtained token with `Authenticate` must set
 ## Authenticated request recovery — `api/client.go`
 
 - A reused token rejected with 401 is evicted. GET and HEAD are granted a new
-  token and replayed once; mutating methods are never replayed.
+  token and replayed once; mutating methods are never replayed and never follow
+  redirects, including same-origin 307/308 responses that preserve the body.
 - A token first granted during the current call is not replayed when rejected:
   it is already current, so another grant cannot repair the request.
 - A 403 is resource authorization and is returned unchanged. It neither evicts

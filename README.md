@@ -47,8 +47,8 @@ The binary carries its own full documentation: `delinea-util --readme` and
 
 Design commitments shared by everything here: credentials never appear on
 argv; nothing is written to disk unless explicitly requested; TLS settings
-apply per-client, never process-wide; token grants never follow redirects;
-writes are never retried. `make test` is fully offline; `make e2e` runs the
+apply per-client, never process-wide; token grants and mutating API requests
+never follow redirects; writes are never retried. `make test` is fully offline; `make e2e` runs the
 live suites and skips cleanly when fixtures are absent, while `make e2e-strict`
 requires the baseline fixture set. CI enforces an 88% offline coverage floor;
 the scheduled quality workflow repeats the shuffled suite and fuzzes every

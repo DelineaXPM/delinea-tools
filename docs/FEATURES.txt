@@ -124,7 +124,8 @@ SECURITY PROPERTIES
     on success, symlinks refused.
   - TLS trust is per-client: CACert and SkipTLSVerify never mutate
     http.DefaultTransport, so other HTTPS in the process is unaffected; TLS-trust
-    settings scope the token cache; cross-origin redirects on grants are refused.
+    settings scope the token cache; grants follow no redirects, cross-origin API
+    redirects are refused, and mutating API requests follow no redirects.
     The standard transport is snapshotted at package initialization; later
     in-place changes must be supplied as Config.Transport and are treated as
     opaque, with token caching disabled.
