@@ -242,6 +242,8 @@ func TestHelpRouting(t *testing.T) {
 		{[]string{"token", "-h"}, "--interactive"},
 		{[]string{"token", "--help"}, "--interactive"},
 		{[]string{"GET", "-h"}, "-d, --data"},
+		{[]string{"secrets", "print", "--out", "help", "--help", "DB=password#1"}, "delinea-util secrets print"},
+		{[]string{"check", "--url", "help", "--help"}, "delinea-util check"},
 	}
 	for _, tc := range cases {
 		out, code := runCapture(t, tc.args...)
@@ -254,6 +256,18 @@ func TestHelpRouting(t *testing.T) {
 	}
 	if _, ok := errors.AsType[*cli.UsageError](dispatch([]string{"help", "frobnicate"})); !ok {
 		t.Error("help frobnicate: want *cli.UsageError")
+	}
+}
+
+func TestUsageForSecretsLeaf(t *testing.T) {
+	for _, leaf := range []string{"run", "print", "template"} {
+		name, usage := usageFor([]string{"--url", "https://vault.example.com", "secrets", leaf, "--unknown"})
+		if name != "delinea-util secrets "+leaf {
+			t.Errorf("%s: usage name = %q", leaf, name)
+		}
+		if !strings.Contains(usage, "Usage:\n  delinea-util secrets "+leaf) || strings.Contains(usage, "Available Commands:") {
+			t.Errorf("%s: got group help instead of leaf help:\n%s", leaf, usage)
+		}
 	}
 }
 

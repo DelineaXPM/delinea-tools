@@ -77,11 +77,16 @@ func tokenHelp() string {
 // usageFor returns the command name and help text to show alongside a usage
 // error, matched to whatever command the arguments named.
 func usageFor(args []string) (string, string) {
-	_, cmd, _ := topLevelCommand(args)
+	cmdIndex, cmd, _ := topLevelCommand(args)
 	switch {
 	case cmd == "token":
 		return "delinea-util token", tokenHelp()
 	case cmd == "secrets":
+		if cmdIndex+1 < len(args) {
+			if usage, ok := secretscmd.CommandUsageText(args[cmdIndex+1], readmeText); ok {
+				return "delinea-util secrets " + args[cmdIndex+1], usage
+			}
+		}
 		return "delinea-util secrets", secretscmd.UsageText(readmeText)
 	case cmd == "check":
 		return "delinea-util check", secretscmd.CheckUsage(readmeText)

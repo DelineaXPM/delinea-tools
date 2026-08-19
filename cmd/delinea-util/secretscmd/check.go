@@ -735,7 +735,11 @@ func cmdCheck(args []string) error {
 		// deciding whether an outage or --no-auth should suppress authentication.
 		// This keeps a missing password/client secret visible as an independent
 		// local problem instead of hiding it behind reachability.
-		_, credValidErr = api.New(resolvedCfg.EngineConfig())
+		validationClient, validationErr := api.New(resolvedCfg.EngineConfig())
+		credValidErr = validationErr
+		if validationClient != nil {
+			validationClient.CloseIdleConnections()
+		}
 	}
 
 	target := effectiveTarget(cc)
@@ -793,6 +797,9 @@ func cmdCheck(args []string) error {
 		authSkip = "not attempted: the vault is unreachable, see the vault section above"
 	default:
 		client, credValidErr = authenticateCredential(context.Background(), resolvedCfg, backend)
+	}
+	if client != nil {
+		defer client.CloseIdleConnections()
 	}
 
 	sections = append(sections, section{title: "credential", findings: credentialFindings(cc, resolvedCfg, cfgErr, credValidErr, credErr, credentialAttempted, authSkip)})
@@ -874,6 +881,7 @@ func authenticateCredential(ctx context.Context, cfg ds.Config, backend api.Back
 	if err != nil {
 		return nil, err
 	}
+	defer ac.CloseIdleConnections()
 	token, err := ac.Authenticate(ctx)
 	if err != nil {
 		return nil, err
@@ -951,9 +959,9 @@ func checkUnknownEnv() []finding {
 	var out []finding
 	for _, name := range names {
 		if near := nearestKnown(name); near != "" {
-			out = append(out, warn(name, "not read by delinea-util secrets; did you mean "+near+"?"))
+			out = append(out, warn(name, "not read by delinea-util; did you mean "+near+"?"))
 		} else {
-			out = append(out, warn(name, "not read by delinea-util secrets"))
+			out = append(out, warn(name, "not read by delinea-util"))
 		}
 	}
 	return out

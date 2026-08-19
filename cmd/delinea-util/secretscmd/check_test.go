@@ -974,6 +974,11 @@ func TestCheckUnknownEnv(t *testing.T) {
 	if f := findingFor(t, got, "DELINEA_TOOLS_TIMEOUTS"); !strings.Contains(f.detail, "did you mean DELINEA_TOOLS_TIMEOUT?") {
 		t.Errorf("got %q, want the near-miss suggested", f.detail)
 	}
+	for _, f := range got {
+		if !strings.Contains(f.detail, "not read by delinea-util") || strings.Contains(f.detail, "delinea-util secrets") {
+			t.Errorf("got stale whole-tool diagnostic %q", f.detail)
+		}
+	}
 	if f := findingFor(t, got, "DELINEA_TOOLS_FROBNICATOR"); strings.Contains(f.detail, "did you mean") {
 		t.Errorf("got %q, want no guess for a name nothing resembles", f.detail)
 	}

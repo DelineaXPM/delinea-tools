@@ -486,6 +486,7 @@ func cmdToken(cc cliConfig, o *options) error {
 	if err != nil {
 		return err
 	}
+	defer client.CloseIdleConnections()
 	ctx := context.Background()
 	var tok string
 	if o.interactive {
@@ -557,6 +558,7 @@ func cmdCall(cc cliConfig, o *options, method, path string) error {
 	if err != nil {
 		return err
 	}
+	defer client.CloseIdleConnections()
 	return cmdCallWithClient(client, o, method, path)
 }
 

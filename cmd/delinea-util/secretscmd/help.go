@@ -16,7 +16,9 @@ func wantsHelp(args []string) bool {
 		case "-h", "--help":
 			return true
 		case "help":
-			return i == 0
+			if i == 0 {
+				return true
+			}
 		case "--":
 			return false
 		}
@@ -88,6 +90,16 @@ func mappingExtra(readme string) string {
 // subHelpText renders one secrets subcommand's Cobra-style help.
 func subHelpText(name, readme string) string {
 	return cli.CommandHelp(name, subLong[name], []string{subUsage[name]}, subFlags[name], cli.GlobalFlags(), mappingExtra(readme))
+}
+
+// CommandUsageText returns the help page for a secrets leaf command. The
+// parent uses it when rendering a leaf's usage error, so the remedy includes
+// that command's flags rather than the secrets-group command listing.
+func CommandUsageText(name, readme string) (string, bool) {
+	if _, ok := subUsage[name]; !ok {
+		return "", false
+	}
+	return subHelpText(name, readme), true
 }
 
 // printCommandHelp writes one secrets subcommand's Cobra-style help.

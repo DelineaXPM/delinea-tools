@@ -10,6 +10,9 @@ func TestWantsHelp(t *testing.T) {
 		{"-h"}, {"--help"}, {"help"},
 		{"DB=password#1", "-h"},
 		{"--via", "stdin", "--help"},
+		{"--out", "help", "--help", "DB=password#1"},
+		{"--in", "help", "DB=password#1", "-h"},
+		{"--pass-env", "help", "--help", "DB=password#1"},
 	} {
 		if !wantsHelp(args) {
 			t.Errorf("%v: got false, want true", args)
@@ -56,6 +59,19 @@ func TestEachCommandHasHelp(t *testing.T) {
 		!strings.Contains(h, "Configured gateway headers still reach the") ||
 		!strings.Contains(h, "skip the Delinea credential") {
 		t.Errorf("check help is incomplete or not the Cobra-style page:\n%s", h)
+	}
+}
+
+func TestCommandUsageText(t *testing.T) {
+	rm := unifiedREADME(t)
+	for _, name := range []string{"run", "print", "template"} {
+		usage, ok := CommandUsageText(name, rm)
+		if !ok || !strings.Contains(usage, "Usage:\n  delinea-util secrets "+name) {
+			t.Errorf("CommandUsageText(%q) = (%q, %v), want that leaf's help", name, usage, ok)
+		}
+	}
+	if usage, ok := CommandUsageText("unknown", rm); ok || usage != "" {
+		t.Errorf("CommandUsageText(unknown) = (%q, %v), want not found", usage, ok)
 	}
 }
 
