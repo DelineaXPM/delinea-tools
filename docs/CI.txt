@@ -6,9 +6,10 @@ Two delivery shapes cover almost every case:
 
   - Scoped injection: "secrets run NAME=field#id -- <command>" runs one command
     with the secret in its environment only. Nothing is written to disk, exported
-    to later steps, or placed on argv, and the tool exec-replaces itself so it
-    does not linger. Use this when the thing that needs the secret is a command
-    you can wrap.
+    to later steps, or placed on argv. On Unix the tool normally exec-replaces
+    itself; on Windows, and for an oversized Unix stdin payload, it supervises
+    the child. Use this when the thing that needs the secret is a command you can
+    wrap.
   - Cross-step / cross-tool export: "secrets print --via <mode>" writes the
     secret where a later step, an eval, or a third-party action can read it.
 

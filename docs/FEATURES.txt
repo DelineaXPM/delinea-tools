@@ -113,11 +113,11 @@ SECURITY PROPERTIES
   - The secret is never a command-line argument, tool-wide. Passwords, client
     secrets, and bearer tokens come only from the environment or stdin — argv is
     world-readable and leaks into shell history and CI logs.
-  - Bearer-token redaction is unconditional: every accepted token is redacted
-    from diagnostics regardless of length. Passwords and client secrets redact
-    at 8+ bytes in diagnostics — a short dictionary-word credential would
-    otherwise rewrite ordinary words in legitimate output — and at any length
-    on the interactive-login error path.
+  - Credential redaction is unconditional: every accepted bearer token,
+    password, client secret, and interactive-login answer is redacted from
+    diagnostics regardless of length. A short credential may also redact a
+    matching ordinary word; confidentiality takes precedence over preserving
+    that diagnostic text.
   - Config never formats a credential: the fmt verbs and json.Marshal render
     Password/ClientSecret/Token as [REDACTED] (empty stays empty), and a URL's
     userinfo/query/fragment are hidden — even when a struct embeds a Config.

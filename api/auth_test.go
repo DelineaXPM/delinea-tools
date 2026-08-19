@@ -767,22 +767,27 @@ func TestZeroResponseDiagnosticFailsClosed(t *testing.T) {
 	}
 }
 
-// DiagnosticSnippet applies the length floor only to passwords and client
-// secrets: a dictionary-word dev password must not rewrite ordinary words in
-// API diagnostics, while every bearer token is redacted. The interactive-login
-// path keeps full credential redaction regardless of length.
-func TestDiagnosticSnippetKeepsShortWordsIntact(t *testing.T) {
+// DiagnosticSnippet redacts every credential regardless of length. A short
+// dictionary-word password may also hide ordinary text, but preserving that
+// text must never take precedence over keeping a credential out of output.
+func TestDiagnosticSnippetRedactsCredentialsAtAnyLength(t *testing.T) {
 	c, err := New(Config{URL: "https://vault.example.com", Username: "u", Password: "secret"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	body := "secret 5 field test not found"
-	if got := c.DiagnosticSnippet([]byte(body)); got != body {
-		t.Errorf("short password mangled the diagnostic: %q", got)
+	if got := c.DiagnosticSnippet([]byte(body)); strings.Contains(got, "secret") || !strings.Contains(got, "[REDACTED]") {
+		t.Errorf("short password escaped diagnostic redaction: %q", got)
 	}
-	// The login path still redacts the same short password.
 	if got := c.authSnippet([]byte(body)); strings.Contains(got, "secret ") || !strings.Contains(got, "[REDACTED]") {
-		t.Errorf("authSnippet must keep redacting short credentials: %q", got)
+		t.Errorf("authSnippet did not redact the short password: %q", got)
+	}
+	platform, err := New(Config{URL: "https://platform.example.com", ClientID: "c", ClientSecret: "key"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := platform.DiagnosticSnippet([]byte("reflected key here")); strings.Contains(got, "key") || !strings.Contains(got, "[REDACTED]") {
+		t.Errorf("short client secret escaped diagnostic redaction: %q", got)
 	}
 	long, err := New(Config{URL: "https://vault.example.com", Token: "long-bearer-token-value"})
 	if err != nil {

@@ -158,7 +158,7 @@ func classifyProbeTransport(err error, header http.Header, opaque bool) error {
 	for _, vv := range header {
 		values = append(values, vv...)
 	}
-	redact := buildRedactor(1, values, nil)
+	redact := buildRedactor(values)
 	return &safeTransportDiagnostic{
 		message: redact(classified.Error()),
 		err:     classified,

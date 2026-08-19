@@ -313,12 +313,12 @@ func (c *Client) identityPost(ctx context.Context, path string, body, out any, p
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := c.hc.Do(req)
 	if err != nil {
-		return c.transportErrorClassifier("identity request", 1, nil, sensitive...)(fmt.Errorf("identity request: %w", err))
+		return c.transportErrorClassifier("identity request", nil, sensitive...)(fmt.Errorf("identity request: %w", err))
 	}
 	defer resp.Body.Close()
 	raw, oversized, err := readAuthResponse(resp.Body)
 	if err != nil {
-		return c.transportErrorClassifier("reading identity response", 1, nil, sensitive...)(fmt.Errorf("reading identity response: %w", err))
+		return c.transportErrorClassifier("reading identity response", nil, sensitive...)(fmt.Errorf("reading identity response: %w", err))
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		// A 3xx (identity posts never follow redirects) means the URL points

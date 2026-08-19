@@ -425,7 +425,7 @@ func (c *Client) grantOnce(ctx context.Context, endpoint string, form url.Values
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	resp, err := c.hc.Do(req)
 	if err != nil {
-		return grantResponse{}, 0, "", c.transportErrorClassifier("requesting token", 1, nil)(fmt.Errorf("requesting token: %w", err))
+		return grantResponse{}, 0, "", c.transportErrorClassifier("requesting token", nil)(fmt.Errorf("requesting token: %w", err))
 	}
 	defer resp.Body.Close()
 	body, oversized, err := readAuthResponse(resp.Body)
@@ -440,7 +440,7 @@ func (c *Client) grantOnce(ctx context.Context, endpoint string, form url.Values
 			return grantResponse{}, resp.StatusCode, resp.Header.Get("Retry-After"),
 				c.grantStatusError(resp.StatusCode, resp.Status, nil)
 		}
-		return grantResponse{}, 0, "", c.transportErrorClassifier("reading token response", 1, nil)(fmt.Errorf("reading token response: %w", err))
+		return grantResponse{}, 0, "", c.transportErrorClassifier("reading token response", nil)(fmt.Errorf("reading token response: %w", err))
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return grantResponse{}, resp.StatusCode, resp.Header.Get("Retry-After"),
@@ -527,36 +527,28 @@ func readAuthResponse(r io.Reader) ([]byte, bool, error) {
 	return body, false, nil
 }
 
-// diagnosticRedactionFloor is the minimum password/client-secret length
-// DiagnosticSnippet redacts. Bearer tokens bypass the floor entirely. A short
-// dictionary-word password ("test", "secret") would otherwise rewrite
-// ordinary words in legitimate diagnostics and hide the real problem. The
-// interactive-login path applies no floor: an echoed password or six-digit MFA
-// answer is a genuine reflection, and those bodies are small.
-const diagnosticRedactionFloor = 8
-
 // DiagnosticSnippet renders server-controlled diagnostic text without allowing
-// it to reflect this client's configured or current bearer token into a
-// terminal or CI log. For a body returned by Do or DoBufferedResponse, prefer
-// the response's DiagnosticSnippet method: it also covers the exact token sent
-// on that request after any number of later rotations. The client deliberately
-// does not retain obsolete tokens: without a response identity, arbitrary bytes
-// cannot be attributed to the old request that produced them.
+// it to reflect this client's configured credentials or current bearer token
+// into a terminal or CI log. For a body returned by Do or DoBufferedResponse,
+// prefer the response's DiagnosticSnippet method: it also covers the exact token
+// sent on that request after any number of later rotations. The client
+// deliberately does not retain obsolete tokens: without a response identity,
+// arbitrary bytes cannot be attributed to the old request that produced them.
 func (c *Client) DiagnosticSnippet(body []byte) string {
 	return c.diagnosticFormatter()(body)
 }
 
 func (c *Client) diagnosticFormatter(requestSecrets ...string) func([]byte) string {
-	redact := c.redactor(diagnosticRedactionFloor, requestSecrets)
+	redact := c.redactor(requestSecrets)
 	return func(body []byte) string {
 		return snippet([]byte(redact(string(body))))
 	}
 }
 
 // authSnippet also includes grant credentials and caller-supplied values such
-// as MFA answers, with no length floor.
+// as MFA answers.
 func (c *Client) authSnippet(body []byte, extra ...string) string {
-	return snippet([]byte(c.redactor(1, nil, extra...)(string(body))))
+	return snippet([]byte(c.redactor(nil, extra...)(string(body))))
 }
 
 // redactText redacts like authSnippet but preserves the text otherwise: no
@@ -565,7 +557,7 @@ func (c *Client) authSnippet(body []byte, extra ...string) string {
 // must reach the user intact, but must never carry an escape sequence or an
 // earlier answer.
 func (c *Client) redactText(s string, extra ...string) string {
-	redacted := c.redactor(1, nil, extra...)(s)
+	redacted := c.redactor(nil, extra...)(s)
 	return strings.Map(func(r rune) rune {
 		if r != '\n' && r != '\t' && unicode.IsControl(r) {
 			return '?'
@@ -575,31 +567,28 @@ func (c *Client) redactText(s string, extra ...string) string {
 }
 
 // redactor builds one replacement pass in the encodings the wire formats use.
-// Bearer tokens are always redacted; minCredentialLen applies only to the
-// configured password/client secret and extra answer-like values, where a
-// short dictionary word would otherwise corrupt ordinary diagnostics.
-func (c *Client) redactor(minCredentialLen int, requestSecrets []string, extra ...string) func(string) string {
-	unconditional, conditional := c.redactionValues(requestSecrets, extra...)
-	return buildRedactor(minCredentialLen, unconditional, conditional)
+// Every known credential is redacted regardless of length. A short credential
+// may also hide matching ordinary text, but confidentiality takes precedence
+// over preserving that diagnostic word.
+func (c *Client) redactor(requestSecrets []string, extra ...string) func(string) string {
+	return buildRedactor(c.redactionValues(requestSecrets, extra...))
 }
 
 // redactionValues snapshots the secrets known to this client and request. It is
 // separate from building the replacement table so the transport classifier can
 // defer the more expensive encoded-variant construction until an error occurs.
-func (c *Client) redactionValues(requestSecrets []string, extra ...string) ([]string, []string) {
+func (c *Client) redactionValues(requestSecrets []string, extra ...string) []string {
 	c.mu.Lock()
 	currentToken := c.token.AccessToken
 	c.mu.Unlock()
-	// Every accepted bearer is an authentication secret regardless of length.
-	// Admission accepts tokens from four bytes upward, including test and custom
-	// server values, so the redactor cannot infer that any accepted token is
-	// disposable. Passwords, client secrets, and answer-like values retain the
-	// floor to avoid rewriting ordinary words.
-	unconditional := []string{c.cfg.Token, currentToken}
-	unconditional = append(unconditional, headerValues(c.cfg.Header)...)
-	unconditional = append(unconditional, requestSecrets...)
-	conditional := append([]string{c.cfg.Password, c.cfg.ClientSecret}, extra...)
-	return unconditional, conditional
+	// Every accepted credential is an authentication secret regardless of length.
+	// Admission accepts bearer tokens from four bytes upward and passwords,
+	// client secrets, and answer-like values may be shorter, so the redactor
+	// cannot infer that any configured value is disposable.
+	values := []string{c.cfg.Token, currentToken, c.cfg.Password, c.cfg.ClientSecret}
+	values = append(values, headerValues(c.cfg.Header)...)
+	values = append(values, requestSecrets...)
+	return append(values, extra...)
 }
 
 // transportErrorClassifier binds credential redaction to one request while
@@ -608,13 +597,13 @@ func (c *Client) redactionValues(requestSecrets []string, extra ...string) ([]st
 // request or response body, which cannot be redacted reliably. Its printable
 // diagnostic is therefore reduced to a stable operation and error class; the
 // original remains available through errors.Is/errors.As.
-func (c *Client) transportErrorClassifier(operation string, minCredentialLen int, requestSecrets []string, extra ...string) func(error) error {
+func (c *Client) transportErrorClassifier(operation string, requestSecrets []string, extra ...string) func(error) error {
 	if c.opaqueTransport {
 		return func(err error) error { return opaqueTransportDiagnostic(operation, err) }
 	}
-	unconditional, conditional := c.redactionValues(requestSecrets, extra...)
+	values := c.redactionValues(requestSecrets, extra...)
 	redactor := sync.OnceValue(func() func(string) string {
-		return buildRedactor(minCredentialLen, unconditional, conditional)
+		return buildRedactor(values)
 	})
 	return func(err error) error {
 		classified := classifyTransport(err)
@@ -622,7 +611,7 @@ func (c *Client) transportErrorClassifier(operation string, minCredentialLen int
 	}
 }
 
-func buildRedactor(minCredentialLen int, unconditional, conditional []string) func(string) string {
+func buildRedactor(secrets []string) func(string) string {
 	variants := make(map[string]struct{})
 	addVariants := func(secret string) {
 		if secret == "" {
@@ -634,17 +623,8 @@ func buildRedactor(minCredentialLen int, unconditional, conditional []string) fu
 			variants[string(encoded[1:len(encoded)-1])] = struct{}{}
 		}
 	}
-	for _, secret := range unconditional {
+	for _, secret := range secrets {
 		addVariants(secret)
-	}
-	// The conditional class is governed by minCredentialLen alone: the login
-	// path passes 1 so a short password or MFA answer reflected in a small
-	// identity error body still redacts, while the diagnostics path passes
-	// the dictionary-word floor.
-	for _, secret := range conditional {
-		if len(secret) >= minCredentialLen {
-			addVariants(secret)
-		}
 	}
 	ordered := make([]string, 0, len(variants))
 	for value := range variants {

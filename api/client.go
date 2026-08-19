@@ -353,14 +353,10 @@ func (b responseDiagnosticBinding) diagnosticSnippet(body []byte) string {
 		runtime.KeepAlive(c)
 		return out
 	}
-	unconditional := []string{b.configuredToken, b.responseToken}
-	unconditional = append(unconditional, b.configuredHeaderValues...)
-	unconditional = append(unconditional, b.requestHeaderValues...)
-	redact := buildRedactor(
-		diagnosticRedactionFloor,
-		unconditional,
-		[]string{b.password, b.clientSecret},
-	)
+	values := []string{b.configuredToken, b.responseToken}
+	values = append(values, b.configuredHeaderValues...)
+	values = append(values, b.requestHeaderValues...)
+	redact := buildRedactor(append(values, b.password, b.clientSecret))
 	return snippet([]byte(redact(string(body))))
 }
 
@@ -1407,7 +1403,7 @@ func (c *Client) attempt(ctx context.Context, method string, base *url.URL, r Re
 		cancel()
 	})
 	requestSecrets := append([]string{tok}, headerValues(r.Header)...)
-	classify := c.transportErrorClassifier("API request", diagnosticRedactionFloor, requestSecrets)
+	classify := c.transportErrorClassifier("API request", requestSecrets)
 	resp, err := c.hc.Do(req)
 	if err != nil {
 		watchdog.Stop()
