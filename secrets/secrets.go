@@ -456,9 +456,11 @@ func classify(err error) error {
 }
 
 // Resolve fetches every mapping and returns the resulting variables in order. A
-// secret referenced by multiple mappings is fetched only once. Transient
-// transport errors are retried; ctx bounds the whole call, and when Timeout is
-// set it applies as an additional deadline.
+// secret referenced by multiple mappings is fetched only once. The built-in API
+// fetcher retries transient transport errors according to api.Config; an
+// arbitrary Fetcher supplied through NewWithFetcher owns its retry policy. ctx
+// bounds the whole call, and when Timeout is set it applies as an additional
+// deadline.
 func (c *Client) Resolve(ctx context.Context, mappings []Mapping) ([]Var, error) {
 	return run(ctx, c.timeout, func(ctx context.Context) ([]Var, error) { return c.resolve(ctx, mappings) })
 }

@@ -60,7 +60,7 @@ func Credentials() string {
 	descs := []string{
 		"Secret Server password (when a username is set)",
 		"Platform OAuth client secret (when a client-id is set)",
-		"a pre-obtained bearer token (otherwise)",
+		"a pre-obtained bearer token (takes precedence when set)",
 	}
 	widest := 0
 	for _, n := range names {

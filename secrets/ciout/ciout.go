@@ -122,6 +122,8 @@ func GitHubMask(vars []secrets.Var) (string, error) {
 // formatter refuses CR and LF rather than emitting a command that fails or
 // weakens the agent's masking guarantees. Values must also be valid UTF-8
 // without NUL because logging commands travel over the agent's UTF-8 text stream.
+// Variable names beginning with Azure's reserved endpoint, input, secret, path,
+// or securefile prefixes are refused case-insensitively.
 func AzurePipelines(vars []secrets.Var) (string, error) {
 	if err := checkNames(vars); err != nil {
 		return "", err

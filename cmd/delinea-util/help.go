@@ -33,8 +33,9 @@ func topLevelHelp() string {
 		{Long: "version", Desc: "print version and build information"},
 	}
 	extra := cli.Credentials() + "\n\n" +
-		"DELINEA_TOOLS_URL and one credential are required for every command except\n" +
-		"\"check --no-auth\". Each command's --help restates what it needs."
+		"DELINEA_TOOLS_URL is required for network commands. Requests and secret delivery\n" +
+		"also require one credential; check may run in reachability-only mode without one.\n" +
+		"check --no-auth additionally ignores any ambient credential."
 	return cli.RootHelp("delinea-util", desc, usage, commands, topics, rootFlags, cli.GlobalFlags(), extra)
 }
 
@@ -62,7 +63,9 @@ func tokenHelp() string {
 		"  DELINEA_TOOLS_TOKEN=$(delinea-util token)\n\n" +
 		"Refuses to print to a terminal unless --allow-terminal is passed; command\n" +
 		"substitution and pipes are always fine.\n\n" +
-		"Requires: DELINEA_TOOLS_URL and one credential (see below)."
+		"Requires: DELINEA_TOOLS_URL and one credential for automatic authentication.\n" +
+		"--interactive requires a username (--username or DELINEA_TOOLS_USERNAME) and\n" +
+		"DELINEA_TOOLS_PASSWORD from the environment; stdin carries MFA answers."
 	usage := []string{"delinea-util token [flags]"}
 	flags := []cli.Flag{
 		{Long: "interactive", Desc: "obtain the token by interactive Platform Identity API login (password + MFA challenges) for MFA-gated accounts, instead of the automatic grant; not with --secret-stdin"},

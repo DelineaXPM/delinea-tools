@@ -77,10 +77,12 @@ Subcommands:
 CONFIGURATION
 -------------
 
-Connection settings come from the environment. Every setting except the
-secret has a flag override (the flag wins). The secret itself — password,
-client_secret, or bearer token — is never a flag: it comes from the
-environment or --secret-stdin only, because argv is world-readable (ps,
+Connection settings come from the environment. Most non-secret settings have a
+flag override (the flag wins). --tls-skip-verify is enable-only: when
+DELINEA_TOOLS_TLS_SKIP_VERIFY is true, unset it or set it false before the
+invocation to restore certificate verification. The secret itself — password,
+client_secret, or bearer token — is never a flag: it comes from the environment
+or --secret-stdin only, because argv is world-readable (ps,
 /proc/<pid>/cmdline) and leaks into shell history and CI logs:
 
   DELINEA_TOOLS_URL              --url URL          Secret Server or Platform base URL
@@ -265,13 +267,14 @@ The PowerShell version of this loop is at the end of EXAMPLES.
 
 Go programs embedding the package (github.com/DelineaXPM/delinea-tools/api)
 share tokens automatically: clients built without Config.Cache use one
-process-wide in-memory cache, reusing one grant per identity for the life of
-the process with nothing on disk. Clients with equivalent grant settings
-sharing a pointer-valued cache also coalesce concurrent grants per credential,
-so ordinary clients constructed per operation cost one grant — and one failed
-attempt, not one per caller — per identity. Value-valued custom caches share
-completed entries but not in-flight grants, and custom transports isolate
-cached grants per client because their authentication behavior is opaque.
+process-wide in-memory cache, reusing a successful grant across clients until
+the token approaches expiry, with nothing on disk. Clients with equivalent
+grant settings sharing a pointer-valued cache also coalesce concurrent grants
+per credential, so one overlapping burst costs one grant attempt, not one
+attempt per caller. A failed grant is not cached, and a later call tries again.
+Value-valued custom caches share completed entries but not in-flight grants,
+and custom transports isolate cached grants per client because their
+authentication behavior is opaque.
 Construct one client per credential at startup regardless (the transport and
 its connection pool are per-client). Supply your own api.NewMemoryCache()
 via Config.Cache to scope the sharing, or set Config.DisableCache to opt
@@ -315,10 +318,11 @@ OUTPUT AND EXIT CODES
 
 The response body is streamed verbatim to stdout; nothing else is written to
 stdout unless -i is passed. Non-2xx responses still print the body, with one
-summary line on stderr. The secrets group uses the same codes: an
-authentication or vault-discovery failure is 2, a transport error is 3. check
-never inherits them — every failed probe is a reported finding, so check
-itself exits 0 or, when any check failed, 1.
+summary line on stderr. The secrets group uses the same codes for its own work:
+an authentication or vault-discovery failure is 2, and a transport error is 3.
+After a successful launch, secrets run instead returns the child's exit code.
+check never inherits codes 2-4 — every failed probe is a reported finding, so
+check itself exits 0 or, when any check failed, 1.
 
   0  success (HTTP 2xx, or a clean check)
   1  usage or configuration error
@@ -365,7 +369,7 @@ CHECK
   delinea-util check [--json] [--quiet] [--no-auth] [--pass-env NAME]... [MAPPING...]
 
 check diagnoses the whole tool with read-only health and authentication requests.
-It writes nothing and never prints a secret value. It reports every problem it
+It writes no files and never prints a secret value. It reports every problem it
 finds rather than stopping at the first, and exits non-zero if any check failed.
 
   delinea-util check                              # configuration and reachability
@@ -443,14 +447,14 @@ terminal, or an unrequested file.
 The secrets group fetches secret values from the vault and hands them to a
 process (as environment variables or on stdin), renders them into a config
 file, or prints them to stdout. Secrets are held only in memory for a single
-command; nothing is written to disk unless you ask for it (template --out, or
-redirecting print). Secret values are never passed as arguments — only
-references (ids, paths, field names) are — and a run child receives a declared
-environment rather than an inherited one, so the credential cannot leak
-downstream. On Unix, run exec-replaces the CLI with your program, so the
-secrets leave memory the moment the child takes over (a --via stdin payload
-larger than a pipe holds, about 60KB, cannot be prebuffered ahead of exec, so
-run then spawns the child and streams, exactly as on Windows).
+command; nothing is written to disk unless you ask for it (template --out,
+print --out, or redirecting print). Secret values are never passed as
+arguments — only references (ids, paths, field names) are — and a run child
+receives a declared environment rather than an inherited one, so the credential
+cannot leak downstream. On Unix, run exec-replaces the CLI with your program,
+so the secrets leave memory the moment the child takes over (a --via stdin
+payload larger than a pipe holds, about 60KB, cannot be prebuffered ahead of
+exec, so run then spawns the child and streams, exactly as on Windows).
 
   delinea-util secrets run      [--via env|stdin|sh] [--pass-env NAME]... MAPPING... -- command [args...]
   delinea-util secrets print    [--via stdin|sh|json|raw|github-env|ado] [--out FILE] [--allow-terminal] MAPPING...
@@ -505,8 +509,9 @@ Delivery (--via):
           valid UTF-8 — use raw for binary values, which JSON would corrupt)
   raw     the one secret value, verbatim, no name (print only; exactly one mapping)
   github-env
-          $GITHUB_ENV / $GITHUB_OUTPUT heredocs (print only; multiline values
-          carry intact; values must be valid UTF-8). Requires --out (usually
+          $GITHUB_ENV / $GITHUB_OUTPUT heredocs (print only; LF-delimited
+          multiline values carry intact; values must be valid UTF-8 without
+          NUL or carriage returns). Requires --out (usually
           --out "$GITHUB_ENV"), which appends, preserving entries from earlier
           step commands. An ::add-mask:: line per secret line goes to stdout
           first, so the runner masks the values in job logs before anything
@@ -514,7 +519,9 @@ Delivery (--via):
   ado     Azure Pipelines task.setsecret and secret task.setvariable commands
           (print only; stdout only). Values become secret pipeline variables
           for subsequent steps in the same job and must be valid UTF-8 without
-          NUL, CR, or LF. Script steps must explicitly map them under env
+          NUL, CR, or LF. Names may not begin, case-insensitively, with endpoint,
+          input, secret, path, or securefile. Script steps must explicitly map
+          them under env
 
 
 FINDING A SECRET'S REFERENCE
@@ -534,9 +541,9 @@ Which reference to use:
     secret precedes an inactive one; among several active secrets sharing a
     name in one folder the choice is undefined.
 
-Nothing in this tool searches for secrets, deliberately: a search listing that
-silently truncates is worse than none. Find a reference once and pin it in your
-configuration.
+The secrets resolver never searches automatically: a search listing that
+silently truncates is worse than none. Find a reference once with a raw request
+or another Secret Server client, then pin it in your configuration.
 
 Secret id: open the secret in Secret Server and read it out of the address bar;
 it is the number after "secrets" in the URL of the secret's page.
@@ -611,8 +618,8 @@ SECRETS SAFETY
   - Nothing on disk by default. Secrets and the credential live only in process
     memory; on Unix the CLI exec-replaces itself for run (except a --via stdin
     payload over ~60KB, which is streamed from a parent that exits with the
-    child). Files appear only when you ask (template --out, or redirecting
-    print), and then the operator owns their lifetime.
+    child). Files appear only when you ask (template --out, print --out, or
+    redirecting print), and then the operator owns their lifetime.
   - print and template refuse to write secrets to a terminal unless
     --allow-terminal is given, since the values would land in your scrollback.
     To feed a program, prefer run, which never writes secrets to a visible sink.
@@ -890,15 +897,14 @@ ones (version, folders, secrets) with --vault:
   delinea-util GET '/api/v1/folders?filter.searchText=ci&take=25'   # search folders
   delinea-util GET /vaultbroker/api/vaults   # platform: which vaults exist?
 
-filter.searchText is case-insensitive. Against secret and folder names it is
-a true substring match ("ache" finds a-cache-secret); against field values
-it matches only from a word boundary ("example.invalid" finds the machine
-qa-1.example.invalid, "1.example" does not). Secrets also match on field
-values and list-field contents, so a hit is not necessarily a name match;
-filter.searchFieldSlug restricts matching to one template field. Password
-fields are not search-indexed at all — probing tokens of a known password
-returns nothing, even with filter.searchField forced to the password field —
-so search is not an oracle for secret values.
+filter.searchText behavior depends on the tenant's Secret Server version and
+Search Indexer configuration. Standard mode searches whole words; Extended
+mode can match partial words. Template fields participate only when configured
+as searchable, so a hit is not necessarily a name match and a miss does not
+prove that a value is absent. filter.searchFieldSlug can restrict matching to
+one searchable template field. Treat password-field indexing as server policy,
+not a client guarantee, and never use search as an authorization check or a
+secret-value oracle.
 
 The /0?...Path= calls resolve a backslash path to the object and its id; the
 path rides in a query string, so escape each backslash as %5C. Secret by

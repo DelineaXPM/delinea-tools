@@ -34,6 +34,8 @@ func TestTopLevelHelp(t *testing.T) {
 		"(required) target base URL",
 		"Credentials (never a flag",
 		"DELINEA_TOOLS_PASSWORD",
+		"check may run in reachability-only mode without one",
+		"check --no-auth additionally ignores any ambient credential",
 		"Use \"delinea-util COMMAND --help\"",
 	} {
 		if !strings.Contains(h, want) {
@@ -61,7 +63,12 @@ func TestPerCommandHelp(t *testing.T) {
 		t.Error("request help must not list token-only flags")
 	}
 	tok := tokenHelp()
-	for _, want := range []string{"--interactive", "--allow-terminal", "Requires: DELINEA_TOOLS_URL", "Credentials (never a flag"} {
+	for _, want := range []string{
+		"--interactive", "--allow-terminal", "Requires: DELINEA_TOOLS_URL",
+		"--interactive requires a username (--username or DELINEA_TOOLS_USERNAME)",
+		"DELINEA_TOOLS_PASSWORD from the environment", "stdin carries MFA answers",
+		"Credentials (never a flag",
+	} {
 		if !strings.Contains(tok, want) {
 			t.Errorf("token help missing %q", want)
 		}

@@ -15,8 +15,10 @@ Two delivery shapes cover almost every case:
 
 The vault credential comes from the environment or stdin, never argv. Mappings
 name the secret's field and id (NAME=field#id) or path (NAME=field@\folder\path)
-— references, not the value. Exit codes are stable for scripting: 0 success,
-1 usage/config, 2 auth/vault, 3 transport, 4 non-2xx.
+— references, not the value. Raw requests and the tool's own secret-delivery
+work use stable exit codes: 0 success, 1 usage/config, 2 auth/vault, 3 transport,
+4 non-2xx. After launch, secrets run returns the child's exit code. check uses 0
+for a clean report and 1 for any finding.
 
 
 GITHUB ACTIONS
@@ -55,6 +57,9 @@ Choose "run" for the tightest scope (nothing masked because nothing is printed);
 choose "--via github-env" when a later step or an action you cannot wrap needs
 the value (broader, but masked in logs). A runnable version of both, exercised
 against a test tenant, lives in .github/workflows/consumer-example.yml.
+GitHub environment files carry valid UTF-8 and LF line breaks; this formatter
+refuses NUL and carriage returns. Normalize CRLF text first, or use scoped run or
+same-step raw file delivery when the value cannot be represented as Unix text.
 
 
 AZURE PIPELINES
@@ -101,6 +106,10 @@ rejects CR and LF; use "secrets run" or same-step file delivery for a private
 key, certificate, or other multiline value. There is deliberately no
 isoutput=true support: fetch again in the consuming job instead of carrying a
 secret across job boundaries.
+
+Azure also reserves variable names beginning, case-insensitively, with endpoint,
+input, secret, path, or securefile. --via ado refuses those prefixes; choose a
+different mapping name such as APP_SECRET or DEPLOY_PATH.
 
 Masking is a best-effort agent feature, not permission control. Azure does not
 mask substrings or fields within structured data, and an agent can be configured

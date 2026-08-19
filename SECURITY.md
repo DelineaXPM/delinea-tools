@@ -22,10 +22,10 @@ merely asserted:
 Because there are no module dependencies, the Go toolchain and standard library
 are the module's entire third-party build and runtime dependency surface. CI
 runs a version-pinned
-[`govulncheck`](https://go.dev/doc/security/vuln/) on every push and pull
-request (`.github/workflows/ci.yml`), scanning with the minimum Go version in
-`go.mod`. A reachable standard-library vulnerability therefore keeps CI red
-until that minimum is advanced to a fixed release.
+[`govulncheck`](https://go.dev/doc/security/vuln/) on every pull request and
+push to `main` (`.github/workflows/ci.yml`), scanning with the minimum Go
+version in `go.mod`. A reachable standard-library vulnerability therefore
+keeps CI red until that minimum is advanced to a fixed release.
 
 ## Supported toolchain and the version floor
 

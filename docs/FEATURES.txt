@@ -42,13 +42,15 @@ THE CLI (delinea-util)
     broker and sends the request there; --vault-id targets a specific vault.
     Discovered routes refresh after five minutes and are revalidated before use.
   - Self-documenting: help, --readme, --tree, --version.
-  - Predictable exit codes shared across the raw verbs, the secrets group, and
-    check:
-        0  success (HTTP 2xx, or a clean check)
+  - Predictable exit codes for raw requests and the secrets group's own work:
+        0  success
         1  usage or configuration error
         2  authentication or vault discovery failed
         3  transport error (DNS, TLS, timeout)
         4  the HTTP call completed with a non-2xx status
+    After a successful launch, secrets run instead returns the child's exit code.
+    check instead exits 0 when every probe is clean and 1 when it reports any
+    finding; probe failures do not escape as codes 2-4.
 
 
 SECRET RETRIEVAL AND DELIVERY (secrets group)
@@ -146,12 +148,14 @@ CI/CD INTEGRATION
 
   - GitHub Actions: "secrets print --via github-env --out $GITHUB_ENV" writes the
     variables and emits ::add-mask:: for every secret line to stdout first, so
-    the runner masks the values before anything can echo them.
+    the runner masks the values before anything can echo them. Values must be
+    valid UTF-8 Unix text: NUL and carriage returns are refused.
   - Azure Pipelines: "secrets print --via ado" writes mask-before-publication
     task.setsecret/task.setvariable commands to stdout for later steps in the
     same job. Values are secret pipeline variables and are not ambient script
     environment variables. Multiline values are refused because Azure's safe
-    default agent configuration rejects multiline secret variables.
+    default agent configuration rejects multiline secret variables. Names may
+    not begin with Azure's endpoint, input, secret, path, or securefile prefixes.
   - GitLab CI: fetch secrets in the consuming job with "secrets run" or "--via sh"
     into eval. (There is deliberately no artifact-based delivery: a GitLab dotenv
     report is uploaded to the server and readable by pipeline users.)
@@ -198,10 +202,10 @@ PORTABILITY AND DEPENDENCIES
     go.mod is tidy and that no go.sum exists.
   - Because there are no module dependencies, the Go toolchain is the module's
     entire third-party build and runtime dependency surface. CI runs a
-    version-pinned govulncheck on every change, and the go directive in go.mod —
-    the minimum toolchain consumers build against — is advanced when an upstream
-    Go security release fixes a vulnerability that affects this module. See
-    SECURITY.md.
+    version-pinned govulncheck on pull requests and pushes to main, and the go
+    directive in go.mod — the minimum toolchain consumers build against — is
+    advanced when an upstream Go security release fixes a vulnerability that
+    affects this module. See SECURITY.md.
   - Runs on Linux, macOS, and Windows; the per-OS execution model (Unix
     exec-replace vs Windows supervision, PowerShell vs POSIX syntax, stdin
     re-encoding) is documented where it matters.

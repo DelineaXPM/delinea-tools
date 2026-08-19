@@ -14,13 +14,14 @@
 // every call. Token grants are guarded even when this advice is ignored:
 // clients built without Config.Cache share a process-wide token cache, and
 // clients with equivalent grant settings sharing a pointer-valued cache
-// coalesce concurrent grants per credential. Thus ordinary clients constructed
-// per operation perform one grant per identity — sequentially and under
-// concurrency alike, for failures as well as successes (a rotated credential
-// under load costs one failed attempt per window, not one per caller racing the
-// account toward lockout). Custom transports isolate grants per client. The same
-// startup-constructed shape is what makes tests against secrets/secretstest
-// natural — the two land together.
+// coalesce concurrent grants per credential. Successful grants are reused by
+// later calls while the token remains fresh. A failed grant is shared only by
+// callers waiting on that same in-flight attempt; it is not cached, so a later
+// call tries again. This keeps one concurrent burst from racing an account
+// toward lockout without suppressing recovery after credentials are repaired.
+// Custom transports isolate grants per client. The same startup-constructed
+// shape is what makes tests against secrets/secretstest natural — the two land
+// together.
 package api
 
 import (

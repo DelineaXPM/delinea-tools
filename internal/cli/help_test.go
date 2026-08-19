@@ -27,7 +27,10 @@ func TestFlagUsagesAlignment(t *testing.T) {
 
 func TestCredentialsNamesEnvVars(t *testing.T) {
 	c := Credentials()
-	for _, want := range []string{"DELINEA_TOOLS_PASSWORD", "DELINEA_TOOLS_CLIENT_SECRET", "DELINEA_TOOLS_TOKEN", "never a flag"} {
+	for _, want := range []string{
+		"DELINEA_TOOLS_PASSWORD", "DELINEA_TOOLS_CLIENT_SECRET", "DELINEA_TOOLS_TOKEN",
+		"never a flag", "takes precedence when set",
+	} {
 		if !strings.Contains(c, want) {
 			t.Errorf("Credentials missing %q", want)
 		}
