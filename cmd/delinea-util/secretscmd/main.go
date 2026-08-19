@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -111,14 +112,22 @@ func writeReplacing(path string, data []byte) error {
 	}
 	tmp := f.Name()
 	if err := writeAndClose(f, data); err != nil {
-		os.Remove(tmp)
-		return err
+		return removeFailedTemp(tmp, err)
 	}
 	if err := os.Rename(tmp, path); err != nil {
-		os.Remove(tmp)
-		return err
+		return removeFailedTemp(tmp, err)
 	}
 	return nil
+}
+
+// removeFailedTemp removes a temporary file after its write or installation
+// failed. If cleanup also fails, return both errors and name the residual file:
+// it may contain secret bytes and must not be left behind silently.
+func removeFailedTemp(path string, cause error) error {
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return errors.Join(cause, fmt.Errorf("removing temporary secret file %q: %w", path, err))
+	}
+	return cause
 }
 
 // writeExisting writes to a pre-existing non-regular target (a FIFO or device

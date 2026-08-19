@@ -49,6 +49,7 @@ func TestArgumentHelpers(t *testing.T) {
 		{"--url=", "--url", "", true, "--url", false},
 		{"--url", "--url", "", false, "--url", false},
 		{"-x=value", "-x=value", "", false, "-x", false},
+		{"-pSUPERSECRET=PAD", "-pSUPERSECRET=PAD", "", false, "-p", false},
 		{"-pSUPERSECRET", "-pSUPERSECRET", "", false, "-p", false},
 		{"-éSUPERSECRET", "-éSUPERSECRET", "", false, "-é", false},
 		{"value=secret", "value=secret", "", false, "value", false},
@@ -87,9 +88,11 @@ func TestUnknownFlagNameNeverRepeatsDelimiterFreeLongFlag(t *testing.T) {
 	for _, tt := range []struct {
 		arg, want string
 	}{
-		{"--pasword=SUPERSECRET", "--pasword"},
+		{"--pasword=SUPERSECRET", "--<redacted>"},
 		{"--passwordSUPERSECRET", "--<redacted>"},
+		{"--passwordSUPERSECRET=PAD", "--<redacted>"},
 		{"-pSUPERSECRET", "-p"},
+		{"-pSUPERSECRET=PAD", "-p"},
 		{"-x", "-x"},
 	} {
 		if got := UnknownFlagName(tt.arg); got != tt.want {

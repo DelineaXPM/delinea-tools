@@ -77,12 +77,12 @@ func SplitInlineFlag(a string) (name, value string, ok bool) {
 // error that repeats the full argument writes that secret into terminal
 // scrollback and CI logs.
 func FlagName(a string) string {
-	if eq := strings.Index(a, "="); eq > 0 {
-		return a[:eq]
-	}
 	if strings.HasPrefix(a, "-") && !strings.HasPrefix(a, "--") && len(a) > 2 {
 		_, size := utf8.DecodeRuneInString(a[1:])
 		return a[:1+size]
+	}
+	if eq := strings.Index(a, "="); eq > 0 {
+		return a[:eq]
 	}
 	return a
 }
@@ -91,9 +91,6 @@ func FlagName(a string) string {
 // A long flag without '=' has no boundary between its name and a value a user
 // may have compacted onto it, so none of that untrusted text is repeated.
 func UnknownFlagName(a string) string {
-	if eq := strings.Index(a, "="); eq > 0 {
-		return a[:eq]
-	}
 	if strings.HasPrefix(a, "--") && len(a) > 2 {
 		return "--<redacted>"
 	}

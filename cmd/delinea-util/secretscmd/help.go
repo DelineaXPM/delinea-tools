@@ -11,10 +11,12 @@ import (
 // before any parsing so that -h never reaches the mapping parser, which would
 // otherwise reject it as an invalid mapping.
 func wantsHelp(args []string) bool {
-	for _, a := range args {
+	for i, a := range args {
 		switch a {
-		case "-h", "--help", "help":
+		case "-h", "--help":
 			return true
+		case "help":
+			return i == 0
 		case "--":
 			return false
 		}
@@ -67,12 +69,12 @@ var subFlags = map[string][]cli.Flag{
 	},
 	"print": {
 		{Long: "via", Arg: "MODE", Desc: "output format: stdin (default), sh, json, raw (one unnamed value), github-env, github-output, or ado"},
-		{Long: "out", Arg: "FILE", Desc: "write to FILE instead of stdout (new/replaced regular files use mode 0600; existing special sinks and GitHub append files keep their mode; ado is stdout-only)"},
+		{Long: "out", Arg: "FILE", Desc: "write to FILE instead of stdout (new/replaced regular files use mode 0600 on Unix and inherit directory ACLs on Windows; existing special sinks and GitHub append files keep their mode; ado is stdout-only)"},
 		{Long: "allow-terminal", Desc: "permit writing secrets to a terminal (refused by default)"},
 	},
 	"template": {
 		{Long: "in", Arg: "FILE", Desc: "(required) the Go text/template to render"},
-		{Long: "out", Arg: "FILE", Desc: "write to FILE only on success (new/replaced regular files use mode 0600; existing special sinks keep their mode)"},
+		{Long: "out", Arg: "FILE", Desc: "write to FILE only on success (new/replaced regular files use mode 0600 on Unix and inherit directory ACLs on Windows; existing special sinks keep their mode)"},
 		{Long: "allow-terminal", Desc: "permit writing secrets to a terminal (refused by default)"},
 	},
 }

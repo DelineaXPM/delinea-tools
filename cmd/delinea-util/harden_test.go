@@ -119,14 +119,18 @@ func TestUnknownFlagErrorsNeverEchoInlineValues(t *testing.T) {
 		{"--pasword=" + secret, "GET", "/x"},              // typo of --password
 		{"-token=" + secret, "GET", "/x"},                 // single-dash form
 		{"-p" + secret, "GET", "/x"},                      // compact short form
+		{"-p" + secret + "=PAD", "GET", "/x"},             // compact short form with '=' in its value
 		{"--password" + secret, "GET", "/x"},              // compact long form
+		{"--password" + secret + "=PAD", "GET", "/x"},     // compact long form with '=' in its value
 		{"--pasword=" + secret, "check"},                  // before a routed verb
 		{"--password" + secret, "check"},                  // compact long form before a verb
 		{"secrets", "--token=" + secret, "run", "M=a#1"},  // between secrets and its verb
 		{"secrets", "--tokenn=" + secret, "run", "M=a#1"}, // typo'd, same slot
 		{"secrets", "--password" + secret, "run", "M=a#1"},
 		{"secrets", "run", "-p" + secret, "M=a#1", "--", "true"},
+		{"secrets", "run", "-p" + secret + "=PAD", "M=a#1", "--", "true"},
 		{"secrets", "run", "--password" + secret, "M=a#1", "--", "true"},
+		{"secrets", "run", "--password" + secret + "=PAD", "M=a#1", "--", "true"},
 	} {
 		err := dispatch(args)
 		if err == nil {

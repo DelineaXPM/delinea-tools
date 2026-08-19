@@ -120,6 +120,39 @@ func TestWriteSecretFileReplacesExistingPermissions(t *testing.T) {
 	}
 }
 
+func TestRemoveFailedTempReportsCleanupFailure(t *testing.T) {
+	cause := errors.New("install failed")
+	missing := filepath.Join(t.TempDir(), "residual-secret")
+	err := removeFailedTemp(missing, cause)
+	if err != cause {
+		t.Fatalf("removeFailedTemp() = %v, want only the original error when the temporary file is already gone", err)
+	}
+
+	residual := filepath.Join(t.TempDir(), "residual-secret")
+	if err := os.Mkdir(residual, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(residual, "secret"), []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err = removeFailedTemp(residual, cause)
+	if !errors.Is(err, cause) || !strings.Contains(err.Error(), residual) || !strings.Contains(err.Error(), "removing temporary secret file") {
+		t.Fatalf("removeFailedTemp() = %v, want the original and cleanup errors with the residual path", err)
+	}
+
+	existing := filepath.Join(t.TempDir(), "temporary-secret")
+	if err := os.WriteFile(existing, []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err = removeFailedTemp(existing, cause)
+	if !errors.Is(err, cause) {
+		t.Fatalf("removeFailedTemp() = %v, want the original error", err)
+	}
+	if _, err := os.Stat(existing); !os.IsNotExist(err) {
+		t.Fatalf("temporary file still exists after successful cleanup: %v", err)
+	}
+}
+
 func TestWriteSecretFileRefusesSymlink(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(dir, "target")

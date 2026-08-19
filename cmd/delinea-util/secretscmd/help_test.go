@@ -20,6 +20,10 @@ func TestWantsHelp(t *testing.T) {
 		{"DB=password#1", "--", "app", "-h"},
 		{"DB=password#1", "--", "app", "--help"},
 		{"DB=password#1", "--", "help"},
+		{"--out", "help", "DB=password#1"},
+		{"--in", "help", "DB=password#1"},
+		{"--pass-env", "help", "DB=password#1"},
+		{"DB=password#1", "help"},
 		{"DB=password#1"},
 		{},
 	} {

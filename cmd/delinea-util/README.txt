@@ -486,8 +486,8 @@ on Windows).
             supervises the child (see PLATFORM NOTES).
   print     fetch and write to stdout in the chosen format.
   template  render --in (Go text/template, {{.NAME}} per mapping) to --out or
-            stdout; new/replaced regular output files use mode 0600; a missing
-            key is an error.
+            stdout; new/replaced regular output files use mode 0600 on Unix and
+            inherit directory ACLs on Windows; a missing key is an error.
 
 To diagnose configuration, reachability, and the credential without fetching a
 secret, use the top-level "delinea-util check".
@@ -723,7 +723,8 @@ nothing plaintext lands on disk, on the command line, or in shell history):
   security find-generic-password -s delinea -a ss-pw -w \
     | delinea-util --secret-stdin secrets run DB_PASS=password#128 -- ./app
 
-  # a single secret to a new/replaced regular file, mode 0600
+  # a single secret to a new/replaced regular file (mode 0600 on Unix;
+  # inherited directory ACLs on Windows)
   secret-tool lookup service delinea account ss-pw \
     | delinea-util --secret-stdin secrets print --via raw --out tls.key 'TLS_KEY=private-key@\certs\prod'
 
