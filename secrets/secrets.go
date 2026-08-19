@@ -157,7 +157,9 @@ func (s *Secret) Field(name string) (string, bool) {
 // Client shared between goroutines must be safe for concurrent calls. They must
 // also stop promptly when ctx is cancelled: Client calls Fetcher methods
 // synchronously, because abandoning a non-cooperative call in a worker
-// goroutine would leak that goroutine and everything it retains.
+// goroutine would leak that goroutine and everything it retains. A successful
+// call must return a non-nil Secret; Client rejects a nil result rather than
+// allowing it to panic later during field resolution.
 type Fetcher interface {
 	Secret(ctx context.Context, id int) (*Secret, error)
 	SecretByPath(ctx context.Context, path string) (*Secret, error)
@@ -688,6 +690,9 @@ func (c *Client) fetch(ctx context.Context, m Mapping) (*Secret, error) {
 	}
 	if err != nil {
 		return nil, fmt.Errorf("fetching secret %s: %w", m.Ref(), classify(err))
+	}
+	if s == nil {
+		return nil, fmt.Errorf("fetching secret %s: %w: fetcher returned nil without an error", m.Ref(), errBadResponse)
 	}
 	return s, nil
 }

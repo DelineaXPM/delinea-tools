@@ -1057,10 +1057,12 @@ transport only. See "go doc github.com/DelineaXPM/delinea-tools/secrets".
 
 Long-running services set Config.Logger (a *log/slog.Logger; nil is silent)
 to see token grant outcomes, request retries, vault selection, and discarded
-cache entries — metadata only, never a credential, a body, or a query
-string. Construct one client per credential at startup; clients are safe for
-concurrent use, and clients built without Config.Cache share a process-wide
-token cache (Config.DisableCache opts out).
+cache entries. A failed token grant may include a bounded, sanitized,
+credential-redacted error-body snippet; logs never include a request body, a
+successful response body, a credential, or a query string. Construct one client
+per credential at startup; clients are safe for concurrent use, and clients
+built without Config.Cache share a process-wide token cache
+(Config.DisableCache opts out).
 
 COMMAND TREE
 ------------

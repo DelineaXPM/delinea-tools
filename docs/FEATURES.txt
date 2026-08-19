@@ -134,8 +134,11 @@ SECURITY PROPERTIES
     host must be same-origin, on the Delinea cloud-domain allowlist, or
     explicitly permitted. Automatic cloud trust and hostname-only allowlist
     entries cover port 443 only; another port requires an exact host:port entry.
-  - Log output (Config.Logger) and error diagnostics carry metadata only —
-    never a credential, a body, or a URL query string.
+  - Log output (Config.Logger) carries metadata and, for a failed token grant,
+    may include a bounded, sanitized, credential-redacted error-body snippet.
+    Error diagnostics may likewise include bounded, sanitized, redacted snippets
+    from failed endpoints. Neither includes a request body, a successful response
+    body, a credential, or a URL query string.
 
 
 CI/CD INTEGRATION

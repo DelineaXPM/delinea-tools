@@ -620,6 +620,31 @@ func TestResolveFieldNotFound(t *testing.T) {
 	}
 }
 
+func TestFetcherNilSecretRejected(t *testing.T) {
+	f := newFake(map[int]*Secret{1: nil})
+	f.byPath[`\ci\nil`] = nil
+	c := NewWithFetcher(f)
+
+	if _, err := c.Secret(context.Background(), 1); !errors.Is(err, errBadResponse) {
+		t.Errorf("Secret: got %v, want errBadResponse", err)
+	}
+	if _, err := c.SecretByPath(context.Background(), `\ci\nil`); !errors.Is(err, errBadResponse) {
+		t.Errorf("SecretByPath: got %v, want errBadResponse", err)
+	}
+
+	mapping := Mapping{EnvName: "A", SecretID: 1, Field: "password"}
+	if _, err := c.Resolve(context.Background(), []Mapping{mapping}); !errors.Is(err, errBadResponse) {
+		t.Errorf("Resolve: got %v, want errBadResponse", err)
+	}
+	results, err := c.Verify(context.Background(), []Mapping{mapping})
+	if err != nil {
+		t.Fatalf("Verify: got whole-call error %v", err)
+	}
+	if len(results) != 1 || !errors.Is(results[0].Err, errBadResponse) {
+		t.Fatalf("Verify: got %+v, want one errBadResponse result", results)
+	}
+}
+
 func TestResolveAccessDeniedNoRetry(t *testing.T) {
 	f := newFake(nil)
 	f.forceErr = errors.New(`400 Bad Request: {"errorCode":"API_AccessDenied"}`)

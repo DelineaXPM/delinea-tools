@@ -7,8 +7,8 @@ name: consumer-example
 #
 # This file dogfoods the CLI from source (go run ./cmd/delinea-util). An external
 # consumer would instead run, with no checkout:
-#     go run github.com/DelineaXPM/delinea-tools/cmd/delinea-util@v0.1.0 ...
-#   or `go install github.com/DelineaXPM/delinea-tools/cmd/delinea-util@v0.1.0`
+#     go run github.com/DelineaXPM/delinea-tools/cmd/delinea-util@v1.1.0 ...
+#   or `go install github.com/DelineaXPM/delinea-tools/cmd/delinea-util@v1.1.0`
 #   once and call `delinea-util` from PATH.
 #
 # The Delinea Platform is identical with DELINEA_TOOLS_CLIENT_ID and
