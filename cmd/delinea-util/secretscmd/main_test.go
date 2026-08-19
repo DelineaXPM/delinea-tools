@@ -693,7 +693,7 @@ func TestRefuseUnsafeExports(t *testing.T) {
 func TestExportsToEnvironment(t *testing.T) {
 	want := map[string]bool{
 		"sh": true, "github-env": true,
-		"stdin": false, "json": false, "raw": false,
+		"stdin": false, "json": false, "raw": false, "ado": false,
 	}
 	for mode, w := range want {
 		if got := exportsToEnvironment(mode); got != w {
@@ -863,7 +863,7 @@ func TestValidModes(t *testing.T) {
 	if validRunMode("json") {
 		t.Errorf("validRunMode(json) = true; json is print-only")
 	}
-	for _, m := range []string{"stdin", "sh", "json", "raw"} {
+	for _, m := range []string{"stdin", "sh", "json", "raw", "github-env", "ado"} {
 		if !validPrintMode(m) {
 			t.Errorf("validPrintMode(%q) = false, want true", m)
 		}
@@ -896,6 +896,10 @@ func TestFormatJSONRaw(t *testing.T) {
 	rawPayload := payloadFor("raw", []ds.Var{{Name: "A", Value: "the-value"}})
 	if got, want := string(rawPayload), "the-value"; got != want {
 		t.Errorf("raw payload: got %q, want %q", got, want)
+	}
+	adoPayload := payloadFor("ado", []ds.Var{{Name: "DB_PASS", Value: "s3cr3t"}})
+	if got, want := string(adoPayload), "##vso[task.setsecret]s3cr3t\n##vso[task.setvariable variable=DB_PASS;issecret=true]s3cr3t\n"; got != want {
+		t.Errorf("ado payload: got %q, want %q", got, want)
 	}
 }
 
@@ -974,6 +978,12 @@ func TestCheckDeliverable(t *testing.T) {
 	if err := checkDeliverable("print", "github-env", notUTF8); err == nil || !strings.Contains(err.Error(), "BLOB") || !strings.Contains(err.Error(), "raw") {
 		t.Errorf("github-env with invalid UTF-8: got %v, want a rejection naming BLOB and the raw remedy", err)
 	}
+	if err := checkDeliverable("print", "ado", notUTF8); err == nil || !strings.Contains(err.Error(), "BLOB") || !strings.Contains(err.Error(), "raw") {
+		t.Errorf("ado with invalid UTF-8: got %v, want a rejection naming BLOB and the raw remedy", err)
+	}
+	if err := checkDeliverable("print", "ado", []ds.Var{{Name: "MULTI", Value: "a\nb"}}); err == nil || !strings.Contains(err.Error(), "multiline") {
+		t.Errorf("ado with multiline value: got %v, want a multiline refusal", err)
+	}
 	if err := checkDeliverable("print", "raw", notUTF8); err != nil {
 		t.Errorf("raw with invalid UTF-8: got %v, want nil", err)
 	}
@@ -982,7 +992,7 @@ func TestCheckDeliverable(t *testing.T) {
 	} else if !envRequiresUTF8 && err != nil {
 		t.Errorf("Unix env with non-NUL bytes: got %v, want nil", err)
 	}
-	for _, mode := range []string{"env", "stdin", "sh", "raw", "json", "github-env"} {
+	for _, mode := range []string{"env", "stdin", "sh", "raw", "json", "github-env", "ado"} {
 		if err := checkDeliverable("print", mode, []ds.Var{{Name: "A", Value: "no nul here"}}); err != nil {
 			t.Errorf("--via %s clean value: got %v, want nil", mode, err)
 		}

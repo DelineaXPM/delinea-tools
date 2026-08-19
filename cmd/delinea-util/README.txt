@@ -453,7 +453,7 @@ larger than a pipe holds, about 60KB, cannot be prebuffered ahead of exec, so
 run then spawns the child and streams, exactly as on Windows).
 
   delinea-util secrets run      [--via env|stdin|sh] [--pass-env NAME]... MAPPING... -- command [args...]
-  delinea-util secrets print    [--via stdin|sh|json|raw|github-env] [--out FILE] [--allow-terminal] MAPPING...
+  delinea-util secrets print    [--via stdin|sh|json|raw|github-env|ado] [--out FILE] [--allow-terminal] MAPPING...
   delinea-util secrets template --in FILE [--out FILE] [--allow-terminal] MAPPING...
   delinea-util secrets --readme | --tree | help
 
@@ -511,6 +511,10 @@ Delivery (--via):
           step commands. An ::add-mask:: line per secret line goes to stdout
           first, so the runner masks the values in job logs before anything
           can echo them
+  ado     Azure Pipelines task.setsecret and secret task.setvariable commands
+          (print only; stdout only). Values become secret pipeline variables
+          for subsequent steps in the same job and must be valid UTF-8 without
+          NUL, CR, or LF. Script steps must explicitly map them under env
 
 
 FINDING A SECRET'S REFERENCE
@@ -763,9 +767,9 @@ shells. The same flows as above:
 CI PIPELINES
 ------------
 
-Both major CI systems get their secrets with this binary alone — no wrapper
-code. The credential comes from the CI system's own secret store as
-DELINEA_TOOLS_* variables; the mappings say what to fetch.
+GitHub Actions, Azure Pipelines, and GitLab get their secrets with this binary
+alone — no wrapper code. The credential comes from the CI system's own secret
+store as DELINEA_TOOLS_* variables; the mappings say what to fetch.
 
 GitHub Actions: one step writes the variables for every later step, and the
 ::add-mask:: lines the mode prints first mean the values are already masked
@@ -777,6 +781,28 @@ in the job log before anything can echo them.
       DELINEA_TOOLS_CLIENT_ID: ${{ secrets.DELINEA_CLIENT_ID }}
       DELINEA_TOOLS_CLIENT_SECRET: ${{ secrets.DELINEA_CLIENT_SECRET }}
     run: delinea-util secrets print --via github-env --out "$GITHUB_ENV" DB_PASS=password#128
+
+Azure Pipelines: prefer "secrets run" in a bash step when it can wrap the
+consumer. For a marketplace task that needs a pipeline variable, --via ado
+registers each non-empty value with the masker before publishing it as a secret
+variable:
+
+  - bash: delinea-util secrets print --via ado API_TOKEN=password#128
+    env:
+      DELINEA_TOOLS_URL: $(DELINEA_URL)
+      DELINEA_TOOLS_CLIENT_ID: $(DELINEA_CLIENT_ID)
+      DELINEA_TOOLS_CLIENT_SECRET: $(DELINEA_CLIENT_SECRET)
+  - task: ExampleDeploy@1
+    inputs:
+      token: $(API_TOKEN)
+
+The variable is available to subsequent steps in the same job only. Secret
+variables are not mapped into script environments automatically; use
+"env: { API_TOKEN: $(API_TOKEN) }" on a script consumer. The mode is stdout-only
+because the agent reads logging commands there. It rejects multiline values:
+Azure rejects multiline secret variables under its safe default configuration.
+Use "secrets run" or same-step file delivery for keys and certificates. Masking
+is best-effort; never echo a secret.
 
 GitLab CI: fetch in the job that consumes the values. There is deliberately
 no artifact-based delivery — a dotenv report would upload the values to the
@@ -977,8 +1003,9 @@ Credential on stdin:
     unchanged.
   - secrets print --out / template --out write at mode 0600 (on Unix) and only
     after a successful fetch or render. github-env appends to its shared command
-    file; other modes atomically replace regular files. Prefer --out over a '>'
-    redirect, which uses the shell umask and is re-encoded by PowerShell.
+    file; ado is stdout-only; other modes atomically replace regular files.
+    Prefer --out over a '>' redirect, which uses the shell umask and is
+    re-encoded by PowerShell.
 
 LIBRARY USAGE
 -------------

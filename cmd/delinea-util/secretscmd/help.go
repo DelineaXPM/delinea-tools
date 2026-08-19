@@ -66,8 +66,8 @@ var subFlags = map[string][]cli.Flag{
 		{Long: "pass-env", Arg: "NAME", Desc: "also pass this variable from the environment to the child; repeatable (a name, not NAME=VALUE)"},
 	},
 	"print": {
-		{Long: "via", Arg: "MODE", Desc: "output format: stdin (default), sh, json, raw (one unnamed value), or github-env"},
-		{Long: "out", Arg: "FILE", Desc: "write to FILE at mode 0600 instead of stdout (github-env appends; other modes replace on success)"},
+		{Long: "via", Arg: "MODE", Desc: "output format: stdin (default), sh, json, raw (one unnamed value), github-env, or ado"},
+		{Long: "out", Arg: "FILE", Desc: "write to FILE at mode 0600 instead of stdout (github-env appends; ado is stdout-only; other modes replace on success)"},
 		{Long: "allow-terminal", Desc: "permit writing secrets to a terminal (refused by default)"},
 	},
 	"template": {

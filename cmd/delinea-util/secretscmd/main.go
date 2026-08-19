@@ -316,10 +316,13 @@ func cmdPrint(args []string, readme string) error {
 		return err
 	}
 	if !validPrintMode(p.mode) {
-		return fmt.Errorf("print --via must be stdin, sh, json, raw, or github-env (got %q)", p.mode)
+		return fmt.Errorf("print --via must be stdin, sh, json, raw, github-env, or ado (got %q)", p.mode)
 	}
 	if len(p.passEnv) > 0 {
 		return fmt.Errorf("--pass-env applies only to run, which launches a child process")
+	}
+	if p.mode == "ado" && out != "" {
+		return &cli.UsageError{Msg: "--via ado writes Azure Pipelines logging commands to stdout, where the agent reads them; it cannot be used with --out"}
 	}
 	if p.mode == "github-env" {
 		// The mode's contract is masks-then-values, and the masks go to the
@@ -714,11 +717,15 @@ func checkDeliverable(cmd, mode string, vars []ds.Var) error {
 		// a dead end.
 		nulRemedy = "run has no delivery mode for it; write it with print --via raw or a template --out file instead"
 	}
-	if mode == "github-env" {
+	if mode == "github-env" || mode == "ado" {
 		// The formatter owns the format's constraints; run it once for the
 		// verdict and keep its variable-naming errors verbatim.
-		if _, err := ciout.GitHubEnv(vars); err != nil {
-			return fmt.Errorf("--via github-env: %w (use --via raw instead)", err)
+		format := ciout.GitHubEnv
+		if mode == "ado" {
+			format = ciout.AzurePipelines
+		}
+		if _, err := format(vars); err != nil {
+			return fmt.Errorf("--via %s: %w (use --via raw instead)", mode, err)
 		}
 		return nil
 	}
@@ -823,13 +830,15 @@ func payloadFor(mode string, vars []ds.Var) []byte {
 		}
 		return nil
 	}
-	if mode == "sh" || mode == "github-env" {
+	if mode == "sh" || mode == "github-env" || mode == "ado" {
 		// checkDeliverable already refused what these formats refuse, and
 		// mapping parsing refused invalid or duplicate names, so this cannot
 		// fail here; the fallback keeps a future drift loud instead of silent.
 		format := ciout.Shell
 		if mode == "github-env" {
 			format = ciout.GitHubEnv
+		} else if mode == "ado" {
+			format = ciout.AzurePipelines
 		}
 		out, err := format(vars)
 		if err != nil {
@@ -953,7 +962,7 @@ func parseArgs(cmd string, args []string, defaultMode string, wantCommand bool) 
 
 func validRunMode(m string) bool { return m == "env" || m == "stdin" || m == "sh" }
 func validPrintMode(m string) bool {
-	return m == "stdin" || m == "sh" || m == "json" || m == "raw" || m == "github-env"
+	return m == "stdin" || m == "sh" || m == "json" || m == "raw" || m == "github-env" || m == "ado"
 }
 
 // exportsToEnvironment reports whether a print --via mode injects its output into

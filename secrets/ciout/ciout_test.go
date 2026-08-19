@@ -124,9 +124,69 @@ func TestGitHubMaskRefusesInvalidUTF8(t *testing.T) {
 	}
 }
 
+func TestAzurePipelines(t *testing.T) {
+	out, err := AzurePipelines([]secrets.Var{
+		v("DB_PASS", "s3cr3t%0D]still-data"),
+		v("EMPTY", ""),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "##vso[task.setsecret]s3cr3t%AZP250D]still-data\n" +
+		"##vso[task.setvariable variable=DB_PASS;issecret=true]s3cr3t%AZP250D]still-data\n" +
+		"##vso[task.setvariable variable=EMPTY;issecret=true]\n"
+	if out != want {
+		t.Errorf("got %q, want %q", out, want)
+	}
+}
+
+func TestAzurePipelinesEscaping(t *testing.T) {
+	if got, want := azureEscapeData("%0D\r\n"), "%AZP250D%0D%0A"; got != want {
+		t.Errorf("data escaping: got %q, want %q", got, want)
+	}
+	if got, want := azureEscapeProperty("A%;]\r\n"), "A%AZP25%3B%5D%0D%0A"; got != want {
+		t.Errorf("property escaping: got %q, want %q", got, want)
+	}
+}
+
+func TestAzurePipelinesRefusals(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+		want  string
+	}{
+		{"BAD_UTF8", string([]byte{0xff}), "UTF-8"},
+		{"HAS_NUL", "a\x00b", "NUL"},
+		{"HAS_LF", "a\nb", "multiline"},
+		{"HAS_CR", "a\rb", "multiline"},
+	}
+	for _, tt := range tests {
+		out, err := AzurePipelines([]secrets.Var{v("GOOD", "first"), v(tt.name, tt.value)})
+		if err == nil || !strings.Contains(err.Error(), tt.want) {
+			t.Errorf("%s: got %v, want an error containing %q", tt.name, err, tt.want)
+		}
+		if out != "" {
+			t.Errorf("%s: validation failure returned partial output %q", tt.name, out)
+		}
+	}
+}
+
+func TestAzurePipelinesReservedPrefixes(t *testing.T) {
+	for _, name := range []string{"ENDPOINT_URL", "inputValue", "SECRET_VALUE", "Path", "SecureFileKey"} {
+		if _, err := AzurePipelines([]secrets.Var{v(name, "x")}); err == nil || !strings.Contains(err.Error(), "reserved") {
+			t.Errorf("%s: got %v, want a reserved-prefix refusal", name, err)
+		}
+	}
+	for _, name := range []string{"DB_SECRET", "APP_PATH", "SECURE_FILE"} {
+		if _, err := AzurePipelines([]secrets.Var{v(name, "x")}); err != nil {
+			t.Errorf("%s: got %v, want the non-prefix name accepted", name, err)
+		}
+	}
+}
+
 func TestAllFormattersShareNameRules(t *testing.T) {
 	formatters := map[string]func([]secrets.Var) (string, error){
-		"Shell": Shell, "GitHubEnv": GitHubEnv, "GitHubMask": GitHubMask,
+		"Shell": Shell, "GitHubEnv": GitHubEnv, "GitHubMask": GitHubMask, "AzurePipelines": AzurePipelines,
 	}
 	for name, f := range formatters {
 		if _, err := f([]secrets.Var{v("1BAD", "x")}); err == nil || !strings.Contains(err.Error(), "not a valid variable name") {
@@ -136,6 +196,51 @@ func TestAllFormattersShareNameRules(t *testing.T) {
 			t.Errorf("%s: got %v, want the duplicate refusal", name, err)
 		}
 	}
+}
+
+func FuzzAzurePipelines(f *testing.F) {
+	for _, seed := range []string{"", "plain", "%0D", "] ; ##vso[task.setvariable variable=PATH]owned", "a\nb", "a\x00b"} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, value string) {
+		out, err := AzurePipelines([]secrets.Var{v("VALUE", value)})
+		if err != nil {
+			if out != "" {
+				t.Fatalf("error %v returned partial output %q", err, out)
+			}
+			return
+		}
+		if strings.ContainsRune(out, '\r') {
+			t.Fatalf("output contains a raw carriage return: %q", out)
+		}
+		lines := strings.Split(strings.TrimSuffix(out, "\n"), "\n")
+		wantLines := 2
+		if value == "" {
+			wantLines = 1
+		}
+		if len(lines) != wantLines {
+			t.Fatalf("got %d command lines, want %d: %q", len(lines), wantLines, out)
+		}
+		for _, line := range lines {
+			if !strings.HasPrefix(line, "##vso[task.set") {
+				t.Fatalf("value fabricated a physical output line: %q", line)
+			}
+		}
+		const variablePrefix = "##vso[task.setvariable variable=VALUE;issecret=true]"
+		encoded := strings.TrimPrefix(lines[len(lines)-1], variablePrefix)
+		if encoded == lines[len(lines)-1] {
+			t.Fatalf("missing setvariable command: %q", out)
+		}
+		if got := azureUnescapeData(encoded); got != value {
+			t.Fatalf("round trip: got %q, want %q", got, value)
+		}
+	})
+}
+
+func azureUnescapeData(s string) string {
+	s = strings.ReplaceAll(s, "%0D", "\r")
+	s = strings.ReplaceAll(s, "%0A", "\n")
+	return strings.ReplaceAll(s, "%AZP25", "%")
 }
 
 // A secret ending in a bare carriage return (no LF) must still be masked as

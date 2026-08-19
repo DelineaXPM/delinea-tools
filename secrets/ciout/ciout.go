@@ -1,8 +1,8 @@
 // Package ciout formats resolved secrets for the sinks CI systems consume —
-// shell export lines, the GitHub Actions environment/output file, and
-// GitHub's ::add-mask:: commands. Every CI integration hand-rolls this
-// layer, and its quoting bugs are security bugs; this is the one tested
-// copy.
+// shell export lines, GitHub Actions environment/output files and mask
+// commands, and Azure Pipelines logging commands. Every CI integration
+// hand-rolls this layer, and its quoting bugs are security bugs; this is the
+// one tested copy.
 //
 // There is deliberately no GitLab dotenv formatter: a dotenv report is
 // uploaded to the GitLab server and readable by pipeline users until it
@@ -113,6 +113,69 @@ func GitHubMask(vars []secrets.Var) (string, error) {
 		}
 	}
 	return b.String(), nil
+}
+
+// AzurePipelines renders task.setsecret and secret task.setvariable logging
+// commands. Each non-empty value is registered with the agent's masker before
+// it is published as a variable. Azure Pipelines rejects multiline secret
+// variables unless an explicitly unsafe agent setting is enabled, so this
+// formatter refuses CR and LF rather than emitting a command that fails or
+// weakens the agent's masking guarantees. Values must also be valid UTF-8
+// without NUL because logging commands travel over the agent's UTF-8 text stream.
+func AzurePipelines(vars []secrets.Var) (string, error) {
+	if err := checkNames(vars); err != nil {
+		return "", err
+	}
+	for _, v := range vars {
+		if prefix := azureReservedPrefix(v.Name); prefix != "" {
+			return "", fmt.Errorf("%s begins with Azure Pipelines reserved variable prefix %q", v.Name, prefix)
+		}
+		if !utf8.ValidString(v.Value) {
+			return "", fmt.Errorf("%s is not valid UTF-8, which an Azure Pipelines logging command cannot carry intact", v.Name)
+		}
+		if strings.IndexByte(v.Value, 0) >= 0 {
+			return "", fmt.Errorf("%s contains a NUL byte, which an Azure Pipelines logging command cannot carry", v.Name)
+		}
+		if strings.ContainsAny(v.Value, "\r\n") {
+			return "", fmt.Errorf("%s is multiline; Azure Pipelines rejects multiline secret variables unless its unsafe multiline-secret setting is enabled", v.Name)
+		}
+	}
+
+	var b strings.Builder
+	for _, v := range vars {
+		value := azureEscapeData(v.Value)
+		if v.Value != "" {
+			b.WriteString("##vso[task.setsecret]" + value + "\n")
+		}
+		b.WriteString("##vso[task.setvariable variable=" + azureEscapeProperty(v.Name) + ";issecret=true]" + value + "\n")
+	}
+	return b.String(), nil
+}
+
+var azureReservedPrefixes = [...]string{"endpoint", "input", "secret", "path", "securefile"}
+
+func azureReservedPrefix(name string) string {
+	lower := strings.ToLower(name)
+	for _, prefix := range azureReservedPrefixes {
+		if strings.HasPrefix(lower, prefix) {
+			return prefix
+		}
+	}
+	return ""
+}
+
+// Percent must be escaped first so the percent signs introduced by the other
+// substitutions remain protocol escapes rather than literal data.
+func azureEscapeData(s string) string {
+	s = strings.ReplaceAll(s, "%", "%AZP25")
+	s = strings.ReplaceAll(s, "\r", "%0D")
+	return strings.ReplaceAll(s, "\n", "%0A")
+}
+
+func azureEscapeProperty(s string) string {
+	s = azureEscapeData(s)
+	s = strings.ReplaceAll(s, "]", "%5D")
+	return strings.ReplaceAll(s, ";", "%3B")
 }
 
 func isLineBreak(r rune) bool { return r == '\n' || r == '\r' }

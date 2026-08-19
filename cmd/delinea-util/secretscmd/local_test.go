@@ -203,6 +203,59 @@ func TestLocalPrintGitHubEnvRequiresOut(t *testing.T) {
 	}
 }
 
+func TestLocalPrintADO(t *testing.T) {
+	srv := loopbackSS(t)
+	clearDelineaEnv(t)
+	t.Setenv("DELINEA_TOOLS_URL", srv.URL)
+	t.Setenv("DELINEA_TOOLS_USERNAME", "svc")
+
+	out, err := runInProcess(t, "pw\n", "print", "--secret-stdin", "--via", "ado", "DB_PASS=password#128", "DB_USER=username#128")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "##vso[task.setsecret]s3cr3t\n" +
+		"##vso[task.setvariable variable=DB_PASS;issecret=true]s3cr3t\n" +
+		"##vso[task.setsecret]svc-db\n" +
+		"##vso[task.setvariable variable=DB_USER;issecret=true]svc-db\n"
+	if out != want {
+		t.Errorf("got %q, want %q", out, want)
+	}
+}
+
+func TestLocalPrintADORefusesOutBeforeFetch(t *testing.T) {
+	srv := loopbackSS(t)
+	clearDelineaEnv(t)
+	t.Setenv("DELINEA_TOOLS_URL", srv.URL)
+	t.Setenv("DELINEA_TOOLS_USERNAME", "svc")
+
+	outFile := filepath.Join(t.TempDir(), "commands")
+	out, err := runInProcess(t, "", "print", "--via", "ado", "--out", outFile, "DB_PASS=password#128")
+	if err == nil || !strings.Contains(err.Error(), "stdout") || !strings.Contains(err.Error(), "--out") {
+		t.Errorf("got %v, want a stdout-only usage error", err)
+	}
+	if out != "" {
+		t.Errorf("nothing may reach stdout on refusal, got %q", out)
+	}
+	if _, statErr := os.Stat(outFile); !os.IsNotExist(statErr) {
+		t.Errorf("--out refusal created %q: %v", outFile, statErr)
+	}
+}
+
+func TestLocalPrintADORefusesMultilineWithoutOutput(t *testing.T) {
+	srv := loopbackSS(t)
+	clearDelineaEnv(t)
+	t.Setenv("DELINEA_TOOLS_URL", srv.URL)
+	t.Setenv("DELINEA_TOOLS_USERNAME", "svc")
+
+	out, err := runInProcess(t, "pw\n", "print", "--secret-stdin", "--via", "ado", "DB_PASS=password#128", "NOTES=notes#128")
+	if err == nil || !strings.Contains(err.Error(), "multiline") {
+		t.Errorf("got %v, want a multiline refusal", err)
+	}
+	if out != "" {
+		t.Errorf("validation failure emitted partial commands: %q", out)
+	}
+}
+
 func TestLocalPrintRawBearerToken(t *testing.T) {
 	srv := loopbackSS(t)
 	clearDelineaEnv(t)

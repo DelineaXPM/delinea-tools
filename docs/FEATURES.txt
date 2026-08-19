@@ -65,7 +65,7 @@ SECRET RETRIEVAL AND DELIVERY (secrets group)
   - Mapping syntax: NAME=field#id or NAME=field@\folder\path; PREFIX_*=#id
     expands every non-file field with a slug into PREFIX_<SLUG> variables.
   - Delivery modes (--via): env, stdin, and sh for run; stdin, sh, json, raw,
-    and github-env for print.
+    github-env, and ado for print.
   - File-field (attachment) content is downloaded and substituted transparently;
     per-secret fan-out is capped by count and total bytes.
   - Collision safety: two mappings that would define the same variable are
@@ -98,7 +98,8 @@ THE GO LIBRARIES
   - secrets/secretstest: a map-backed Fetcher stub for consumer tests, encoding
     the real server's semantics (missing and denied both return ErrAccessDenied).
   - secrets/ciout: CI output formatters — Shell (export lines), GitHubEnv
-    ($GITHUB_ENV heredocs), GitHubMask (::add-mask:: per line).
+    ($GITHUB_ENV heredocs), GitHubMask (::add-mask:: per line), and
+    AzurePipelines (task.setsecret plus secret task.setvariable commands).
   - secrets/retrievejson: one strict parser for the shared CI retrieve-secrets
     JSON schema ([{secretId|secretPath, secretKey, outputVariable}]).
   - Sentinel errors matched with errors.Is: ErrConfig, ErrAuth, ErrAccessDenied,
@@ -143,15 +144,21 @@ CI/CD INTEGRATION
   - GitHub Actions: "secrets print --via github-env --out $GITHUB_ENV" writes the
     variables and emits ::add-mask:: for every secret line to stdout first, so
     the runner masks the values before anything can echo them.
+  - Azure Pipelines: "secrets print --via ado" writes mask-before-publication
+    task.setsecret/task.setvariable commands to stdout for later steps in the
+    same job. Values are secret pipeline variables and are not ambient script
+    environment variables. Multiline values are refused because Azure's safe
+    default agent configuration rejects multiline secret variables.
   - GitLab CI: fetch secrets in the consuming job with "secrets run" or "--via sh"
     into eval. (There is deliberately no artifact-based delivery: a GitLab dotenv
     report is uploaded to the server and readable by pipeline users.)
   - Shared, tested output and parsing layers (ciout, retrievejson) so an
     integration is a thin wrapper, not a hand-rolled copy where quoting bugs
     become security bugs.
-  - Worked recipes and a runnable example: docs/CI.txt (GitHub Actions and
-    GitLab, the run vs github-env delivery shapes) and the consumer-example
-    workflow, which exercises both against a test tenant.
+  - Worked recipes and a runnable example: docs/CI.txt (GitHub Actions, Azure
+    Pipelines, GitLab, and scoped vs cross-step delivery) and the GitHub
+    consumer-example workflow, which exercises both GitHub delivery shapes
+    against a test tenant.
 
 
 TOKEN LIFECYCLE AND PERFORMANCE

@@ -23,8 +23,8 @@ GITHUB ACTIONS
 
 Get the tool with go run (no install) or install it once onto PATH:
 
-    go run github.com/DelineaXPM/delinea-tools/cmd/delinea-util@v0.1.0 ...
-    # or: go install github.com/DelineaXPM/delinea-tools/cmd/delinea-util@v0.1.0
+    go run github.com/DelineaXPM/delinea-tools/cmd/delinea-util@latest ...
+    # or: go install github.com/DelineaXPM/delinea-tools/cmd/delinea-util@latest
 
 Set DELINEA_TOOLS_URL and one credential from your repository secrets (a
 Secret Server username/password pair, a Platform CLIENT_ID/CLIENT_SECRET, or a
@@ -54,6 +54,57 @@ Choose "run" for the tightest scope (nothing masked because nothing is printed);
 choose "--via github-env" when a later step or an action you cannot wrap needs
 the value (broader, but masked in logs). A runnable version of both, exercised
 against a test tenant, lives in .github/workflows/consumer-example.yml.
+
+
+AZURE PIPELINES
+---------------
+
+Prefer scoped injection when the consumer is a command you can wrap. The value
+never enters the logging-command stream or becomes a pipeline variable:
+
+    steps:
+      - bash: |
+          delinea-util secrets run API_TOKEN=password#128 -- ./deploy.sh
+        env:
+          DELINEA_TOOLS_URL: $(DELINEA_URL)
+          DELINEA_TOOLS_CLIENT_ID: $(DELINEA_CLIENT_ID)
+          DELINEA_TOOLS_CLIENT_SECRET: $(DELINEA_CLIENT_SECRET)
+
+For a marketplace task or another consumer that cannot be wrapped, publish
+single-line values as secret variables for later steps in the same job:
+
+    steps:
+      - bash: |
+          delinea-util secrets print --via ado API_TOKEN=password#128
+        env:
+          DELINEA_TOOLS_URL: $(DELINEA_URL)
+          DELINEA_TOOLS_CLIENT_ID: $(DELINEA_CLIENT_ID)
+          DELINEA_TOOLS_CLIENT_SECRET: $(DELINEA_CLIENT_SECRET)
+      - task: ExampleDeploy@1
+        inputs:
+          token: $(API_TOKEN)
+
+The mode writes Azure logging commands to stdout; do not use --out. For each
+non-empty value it registers task.setsecret before task.setvariable with
+issecret=true. The variable is available only to subsequent steps in the same
+job. A later script does not receive a secret pipeline variable automatically;
+map it explicitly:
+
+      - bash: ./deploy.sh
+        env:
+          API_TOKEN: $(API_TOKEN)
+
+Azure's agent rejects multiline secret variables by default because its unsafe
+multiline opt-in can leave values insufficiently masked. Accordingly, --via ado
+rejects CR and LF; use "secrets run" or same-step file delivery for a private
+key, certificate, or other multiline value. There is deliberately no
+isoutput=true support: fetch again in the consuming job instead of carrying a
+secret across job boundaries.
+
+Masking is a best-effort agent feature, not permission control. Azure does not
+mask substrings or fields within structured data, and an agent can be configured
+to ignore values below a minimum length. Never echo a secret. Prefer "secrets
+run" whenever the consumer can be wrapped.
 
 
 GITLAB CI
