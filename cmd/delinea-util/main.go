@@ -37,7 +37,7 @@ func run(args []string) int {
 		// specific command, not the top-level page — so the remedy shown matches
 		// what was typed.
 		name, u := usageFor(args)
-		fmt.Fprintf(os.Stderr, "\n%s: %s\n\n%s\n\n", name, ue.Msg, u)
+		fmt.Fprintf(os.Stderr, "\n%s: %s\n\n%s\n\n", name, cli.SanitizeText(ue.Msg), u)
 		return 1
 	}
 	fmt.Fprintln(os.Stderr, "delinea-util:", cli.SanitizeText(err.Error()))
@@ -218,7 +218,7 @@ func topLevelCommand(args []string) (int, string, error) {
 			if _, ok := rootBoolFlags[a]; ok {
 				continue
 			}
-			return 0, "", &cli.UsageError{Msg: fmt.Sprintf("unknown flag %q before the command; connection flags may precede the command, and a command's own flags follow it", cli.FlagName(a))}
+			return 0, "", &cli.UsageError{Msg: fmt.Sprintf("unknown flag %q before the command; connection flags may precede the command, and a command's own flags follow it", cli.UnknownFlagName(a))}
 		}
 		return i, a, nil
 	}
@@ -338,7 +338,7 @@ func parseArgs(args []string, cc *cliConfig) (*options, error) {
 			boolSpec.apply(cc, o)
 			i++
 		case strings.HasPrefix(a, "-") && len(a) > 1:
-			return nil, &cli.UsageError{Msg: fmt.Sprintf("unknown flag %q", cli.FlagName(a))}
+			return nil, &cli.UsageError{Msg: fmt.Sprintf("unknown flag %q", cli.UnknownFlagName(a))}
 		default:
 			o.positionals = append(o.positionals, a)
 			i++

@@ -150,14 +150,15 @@ func TestLeadingFlagsRouteTopLevelCommands(t *testing.T) {
 
 	// A flag the router does not know has unknowable arity: guessing would
 	// either swallow the command as the flag's value or promote the value to
-	// the command, so it must be a clear error instead.
+	// the command, so it must be a clear error instead. The unknown long token
+	// is not repeated because it has no safe name/value boundary.
 	for _, args := range [][]string{
 		{"--pass-env", "HTTPS_PROXY", "check"},
 		{"--pass-env", "check", "DB=password#128"},
 	} {
 		_, _, err := topLevelCommand(args)
-		if err == nil || !strings.Contains(err.Error(), "--pass-env") {
-			t.Errorf("topLevelCommand(%v) = %v, want an unknown-leading-flag error naming --pass-env", args, err)
+		if err == nil || !strings.Contains(err.Error(), "unknown flag") || strings.Contains(err.Error(), "HTTPS_PROXY") {
+			t.Errorf("topLevelCommand(%v) = %v, want a redacted unknown-leading-flag error", args, err)
 		}
 	}
 

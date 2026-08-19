@@ -487,6 +487,36 @@ func TestDeliveryCommandsRequireMappings(t *testing.T) {
 	}
 }
 
+type closeTrackingFetcher struct {
+	verifyFake
+	closeCalls int
+}
+
+func (f *closeTrackingFetcher) CloseIdleConnections() { f.closeCalls++ }
+
+func TestResolveMappingsClosesIdleConnections(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		id      int
+		wantErr bool
+	}{
+		{"success", 1, false},
+		{"resolution failure", 2, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			fetcher := &closeTrackingFetcher{}
+			client := ds.NewWithFetcher(fetcher)
+			_, err := resolveMappings(client, []ds.Mapping{{EnvName: "A", SecretID: tt.id, Field: "password"}})
+			if (err != nil) != tt.wantErr {
+				t.Errorf("resolveMappings() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if fetcher.closeCalls != 1 {
+				t.Errorf("CloseIdleConnections called %d times, want 1", fetcher.closeCalls)
+			}
+		})
+	}
+}
+
 func TestFormat(t *testing.T) {
 	vars := []ds.Var{{Name: "A", Value: "multi\nline"}, {Name: "B", Value: "it's"}}
 

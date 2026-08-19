@@ -83,6 +83,21 @@ func TestCredentialFlagErrorRedactsInlineValue(t *testing.T) {
 	}
 }
 
+func TestUnknownFlagNameNeverRepeatsDelimiterFreeLongFlag(t *testing.T) {
+	for _, tt := range []struct {
+		arg, want string
+	}{
+		{"--pasword=SUPERSECRET", "--pasword"},
+		{"--passwordSUPERSECRET", "--<redacted>"},
+		{"-pSUPERSECRET", "-p"},
+		{"-x", "-x"},
+	} {
+		if got := UnknownFlagName(tt.arg); got != tt.want {
+			t.Errorf("UnknownFlagName(%q) = %q, want %q", tt.arg, got, tt.want)
+		}
+	}
+}
+
 func TestDocumentationHelpers(t *testing.T) {
 	if got := Tree("Commands", []TreeItem{{"one", "first"}, {"two", "last"}}); got != "Commands\n├── one  — first\n└── two  — last\n" {
 		t.Errorf("Tree = %q", got)

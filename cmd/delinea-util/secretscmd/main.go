@@ -212,7 +212,7 @@ func Dispatch(args []string, readme string) error {
 			if name, _, _ := cli.SplitInlineFlag(args[0]); cli.IsCredentialFlag(name) {
 				return cli.CredentialFlagError(name)
 			}
-			return &cli.UsageError{Msg: fmt.Sprintf("unknown flag %q; the subcommand comes first (run, print, or template)", cli.FlagName(args[0]))}
+			return &cli.UsageError{Msg: fmt.Sprintf("unknown flag %q; the subcommand comes first (run, print, or template)", cli.UnknownFlagName(args[0]))}
 		}
 		return &cli.UsageError{Msg: fmt.Sprintf("unknown subcommand %q", args[0])}
 	}
@@ -420,6 +420,11 @@ func resolve(cc cliConfig, mappings []ds.Mapping) ([]ds.Var, error) {
 	if err != nil {
 		return nil, err
 	}
+	return resolveMappings(client, mappings)
+}
+
+func resolveMappings(client *ds.Client, mappings []ds.Mapping) ([]ds.Var, error) {
+	defer client.CloseIdleConnections()
 	return client.Resolve(context.Background(), mappings)
 }
 
@@ -978,7 +983,7 @@ func parseArgs(cmd string, args []string, defaultMode string, wantCommand bool) 
 				// A flag no parser claimed (a raw-verb flag like -v or -H that
 				// the router let through) must say so, not surface as a
 				// cryptic mapping-parse error.
-				return parsed{}, &cli.UsageError{Msg: fmt.Sprintf("unknown flag %s for secrets %s", cli.FlagName(a), cmd)}
+				return parsed{}, &cli.UsageError{Msg: fmt.Sprintf("unknown flag %q for secrets %s", cli.UnknownFlagName(a), cmd)}
 			}
 			m, perr := ds.ParseMapping(a)
 			if perr != nil {

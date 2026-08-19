@@ -87,6 +87,19 @@ func FlagName(a string) string {
 	return a
 }
 
+// UnknownFlagName returns a diagnostic-safe spelling of an unrecognized flag.
+// A long flag without '=' has no boundary between its name and a value a user
+// may have compacted onto it, so none of that untrusted text is repeated.
+func UnknownFlagName(a string) string {
+	if eq := strings.Index(a, "="); eq > 0 {
+		return a[:eq]
+	}
+	if strings.HasPrefix(a, "--") && len(a) > 2 {
+		return "--<redacted>"
+	}
+	return FlagName(a)
+}
+
 // IsCredentialFlag reports a flag name that would carry secret material as a
 // command-line argument. Both binaries' parsers reject these with
 // CredentialFlagError; the flags do not exist, because argv is world-readable

@@ -109,19 +109,24 @@ func TestSecretFlagsRejected(t *testing.T) {
 
 // No error path may echo a flag's inline value: a mistyped credential flag
 // ("--pasword=SECRET"), a Go-style single dash ("-token=SECRET"), a compact
-// short flag ("-pSECRET"), or a credential flag between "secrets" and its verb
-// all carry the secret in the argument, and repeating the argument writes it
-// into scrollback and CI logs.
+// short flag ("-pSECRET"), a delimiter-free long flag
+// ("--passwordSECRET"), or a credential flag between "secrets" and its verb all
+// carry the secret in the argument, and repeating the argument writes it into
+// scrollback and CI logs.
 func TestUnknownFlagErrorsNeverEchoInlineValues(t *testing.T) {
 	const secret = "SUPERSECRET"
 	for _, args := range [][]string{
 		{"--pasword=" + secret, "GET", "/x"},              // typo of --password
 		{"-token=" + secret, "GET", "/x"},                 // single-dash form
 		{"-p" + secret, "GET", "/x"},                      // compact short form
+		{"--password" + secret, "GET", "/x"},              // compact long form
 		{"--pasword=" + secret, "check"},                  // before a routed verb
+		{"--password" + secret, "check"},                  // compact long form before a verb
 		{"secrets", "--token=" + secret, "run", "M=a#1"},  // between secrets and its verb
 		{"secrets", "--tokenn=" + secret, "run", "M=a#1"}, // typo'd, same slot
+		{"secrets", "--password" + secret, "run", "M=a#1"},
 		{"secrets", "run", "-p" + secret, "M=a#1", "--", "true"},
+		{"secrets", "run", "--password" + secret, "M=a#1", "--", "true"},
 	} {
 		err := dispatch(args)
 		if err == nil {
@@ -131,9 +136,16 @@ func TestUnknownFlagErrorsNeverEchoInlineValues(t *testing.T) {
 		if strings.Contains(err.Error(), secret) {
 			t.Errorf("%v: secret echoed in error %q", args, err)
 		}
+		if strings.ContainsRune(err.Error(), '\x1b') {
+			t.Errorf("%v: control character survived in error %q", args, err)
+		}
+	}
+	err := dispatch([]string{"secrets", "run", "--unknown\x1b[31m", "M=a#1", "--", "true"})
+	if err == nil || strings.ContainsRune(err.Error(), '\x1b') {
+		t.Errorf("control-bearing unknown flag: got %q, want a sanitized error", err)
 	}
 	// The credential-flag rejection still names the flag so the remedy is clear.
-	err := dispatch([]string{"secrets", "--token=" + secret, "run", "M=a#1"})
+	err = dispatch([]string{"secrets", "--token=" + secret, "run", "M=a#1"})
 	if err == nil || !strings.Contains(err.Error(), "--token") || !strings.Contains(err.Error(), "never taken as a command-line argument") {
 		t.Errorf("credential flag after secrets: got %v, want the name-only credential rejection", err)
 	}
