@@ -808,6 +808,21 @@ func TestDiagnosticSnippetRedactsCredentialsAtAnyLength(t *testing.T) {
 	}
 }
 
+func TestRedactorDoesNotReprocessReplacementMarkers(t *testing.T) {
+	// Each distinct character in [REDACTED] is itself a one-byte secret. A
+	// sequence of ReplaceAll calls would process markers inserted by earlier
+	// replacements and amplify this small input by orders of magnitude.
+	redact := buildRedactor([]string{"[", "]", "R", "E", "D", "A", "C", "T"})
+	in := strings.Repeat("AREDCT", 100)
+	want := strings.Repeat("[REDACTED]", len(in))
+	if got := redact(in); got != want {
+		t.Fatalf("single-pass redaction: got %d bytes, want %d", len(got), len(want))
+	}
+	if got, want := buildRedactor([]string{"ab", "abc"})("abc ab"), "[REDACTED] [REDACTED]"; got != want {
+		t.Fatalf("longest match must win: got %q, want %q", got, want)
+	}
+}
+
 func TestGrantErrorRedactsSubmittedCredential(t *testing.T) {
 	for _, tc := range []struct {
 		name   string

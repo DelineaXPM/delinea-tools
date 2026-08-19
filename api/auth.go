@@ -630,13 +630,24 @@ func buildRedactor(secrets []string) func(string) string {
 	for value := range variants {
 		ordered = append(ordered, value)
 	}
-	sort.Slice(ordered, func(i, j int) bool { return len(ordered[i]) > len(ordered[j]) })
-	return func(s string) string {
-		for _, value := range ordered {
-			s = strings.ReplaceAll(s, value, "[REDACTED]")
+	sort.Slice(ordered, func(i, j int) bool {
+		if len(ordered[i]) != len(ordered[j]) {
+			return len(ordered[i]) > len(ordered[j])
 		}
-		return s
+		return ordered[i] < ordered[j]
+	})
+	if len(ordered) == 0 {
+		return func(s string) string { return s }
 	}
+	pairs := make([]string, 0, len(ordered)*2)
+	for _, value := range ordered {
+		pairs = append(pairs, value, "[REDACTED]")
+	}
+	// Replacer performs one pass and does not scan replacement text. Sequential
+	// ReplaceAll calls would let a later one-byte secret such as "R" repeatedly
+	// expand the marker inserted for an earlier secret, turning a bounded
+	// diagnostic into an attacker-amplified allocation.
+	return strings.NewReplacer(pairs...).Replace
 }
 
 // snippet reduces a server response body to one bounded, single-line string
