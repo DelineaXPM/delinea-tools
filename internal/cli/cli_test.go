@@ -49,6 +49,8 @@ func TestArgumentHelpers(t *testing.T) {
 		{"--url=", "--url", "", true, "--url", false},
 		{"--url", "--url", "", false, "--url", false},
 		{"-x=value", "-x=value", "", false, "-x", false},
+		{"-pSUPERSECRET", "-pSUPERSECRET", "", false, "-p", false},
+		{"-éSUPERSECRET", "-éSUPERSECRET", "", false, "-é", false},
 		{"value=secret", "value=secret", "", false, "value", false},
 		{"--token=secret", "--token", "secret", true, "--token", true},
 	} {

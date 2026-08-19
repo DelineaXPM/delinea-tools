@@ -217,15 +217,15 @@ func TestCheckSecretsReportsCollision(t *testing.T) {
 		{EnvName: "A", SecretID: 1, Field: "password"},
 		{EnvName: "A", SecretID: 1, Field: "blank"},
 	})
-	for _, f := range got {
-		if f.label == "A" && f.status == statusFail {
-			if !strings.Contains(f.detail, "defined 2 times") {
-				t.Errorf("collision detail = %q, want it to say defined 2 times", f.detail)
-			}
-			return
-		}
+	if len(got) != 2 {
+		t.Fatalf("got %d findings, want one successful mapping and one rejected duplicate: %+v", len(got), got)
 	}
-	t.Errorf("no FAIL finding for the collision on A, got %+v", got)
+	if got[0].label != "A" || got[0].status != statusOK {
+		t.Errorf("first finding = %+v, want the first mapping to succeed", got[0])
+	}
+	if got[1].label != "A" || got[1].status != statusFail || !strings.Contains(got[1].detail, "defined more than once") {
+		t.Errorf("second finding = %+v, want the duplicate mapping to fail as defined more than once", got[1])
+	}
 }
 
 func TestCheckConfigReportsQualifiedUsername(t *testing.T) {

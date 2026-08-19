@@ -108,17 +108,20 @@ func TestSecretFlagsRejected(t *testing.T) {
 }
 
 // No error path may echo a flag's inline value: a mistyped credential flag
-// ("--pasword=SECRET"), a Go-style single dash ("-token=SECRET"), or a
-// credential flag between "secrets" and its verb all carry the secret in the
-// argument, and repeating the argument writes it into scrollback and CI logs.
+// ("--pasword=SECRET"), a Go-style single dash ("-token=SECRET"), a compact
+// short flag ("-pSECRET"), or a credential flag between "secrets" and its verb
+// all carry the secret in the argument, and repeating the argument writes it
+// into scrollback and CI logs.
 func TestUnknownFlagErrorsNeverEchoInlineValues(t *testing.T) {
 	const secret = "SUPERSECRET"
 	for _, args := range [][]string{
 		{"--pasword=" + secret, "GET", "/x"},              // typo of --password
 		{"-token=" + secret, "GET", "/x"},                 // single-dash form
+		{"-p" + secret, "GET", "/x"},                      // compact short form
 		{"--pasword=" + secret, "check"},                  // before a routed verb
 		{"secrets", "--token=" + secret, "run", "M=a#1"},  // between secrets and its verb
 		{"secrets", "--tokenn=" + secret, "run", "M=a#1"}, // typo'd, same slot
+		{"secrets", "run", "-p" + secret, "M=a#1", "--", "true"},
 	} {
 		err := dispatch(args)
 		if err == nil {

@@ -17,6 +17,7 @@ import (
 	"runtime/debug"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 // UsageError is an error whose message deserves the tool's usage text beneath
@@ -68,14 +69,20 @@ func SplitInlineFlag(a string) (name, value string, ok bool) {
 	return a, "", false
 }
 
-// FlagName reduces a flag argument to its name, dropping any inline "=value".
+// FlagName reduces a flag argument to its name, dropping any inline "=value"
+// or value compacted onto a short flag.
 // Every error message that echoes an unrecognized flag must echo FlagName of
 // it, never the raw argument: a mistyped credential flag ("--pasword=SECRET",
-// "-token=SECRET") carries the secret in its value, and an error that repeats
-// the full argument writes that secret into terminal scrollback and CI logs.
+// "-token=SECRET", or "-pSECRET") carries the secret in its value, and an
+// error that repeats the full argument writes that secret into terminal
+// scrollback and CI logs.
 func FlagName(a string) string {
 	if eq := strings.Index(a, "="); eq > 0 {
 		return a[:eq]
+	}
+	if strings.HasPrefix(a, "-") && !strings.HasPrefix(a, "--") && len(a) > 2 {
+		_, size := utf8.DecodeRuneInString(a[1:])
+		return a[:1+size]
 	}
 	return a
 }

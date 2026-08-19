@@ -463,6 +463,30 @@ func TestCmdTemplateErrors(t *testing.T) {
 	}
 }
 
+func TestDeliveryCommandsRequireMappings(t *testing.T) {
+	clearDelineaEnv(t)
+	templatePath := filepath.Join(t.TempDir(), "template")
+	if err := os.WriteFile(templatePath, []byte("unchanged"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tt := range []struct {
+		name string
+		call func() error
+	}{
+		{"run", func() error { return cmdRun([]string{"--", "true"}, unifiedREADME(t)) }},
+		{"print", func() error { return cmdPrint(nil, unifiedREADME(t)) }},
+		{"template", func() error { return cmdTemplate([]string{"--in", templatePath}, unifiedREADME(t)) }},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.call()
+			var usage *cli.UsageError
+			if !errors.As(err, &usage) || !strings.Contains(err.Error(), "requires at least one MAPPING") {
+				t.Errorf("got %T (%v), want a mapping usage error", err, err)
+			}
+		})
+	}
+}
+
 func TestFormat(t *testing.T) {
 	vars := []ds.Var{{Name: "A", Value: "multi\nline"}, {Name: "B", Value: "it's"}}
 

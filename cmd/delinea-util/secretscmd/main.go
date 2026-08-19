@@ -258,6 +258,9 @@ func cmdRun(args []string, readme string) error {
 	if !p.hasCommand || len(p.command) == 0 {
 		return fmt.Errorf("run requires a command after --")
 	}
+	if err := requireMappings("run", p.mappings); err != nil {
+		return err
+	}
 	// Built before resolving so a misspelled --pass-env fails without spending an
 	// authentication attempt against the vault.
 	env, err := childEnv(p.passEnv)
@@ -323,6 +326,9 @@ func cmdPrint(args []string, readme string) error {
 	}
 	if p.mode == "ado" && out != "" {
 		return &cli.UsageError{Msg: "--via ado writes Azure Pipelines logging commands to stdout, where the agent reads them; it cannot be used with --out"}
+	}
+	if err := requireMappings("print", p.mappings); err != nil {
+		return err
 	}
 	if isGitHubFileMode(p.mode) {
 		// The mode's contract is masks-then-values, and the masks go to the
@@ -989,6 +995,13 @@ func validPrintMode(m string) bool {
 	return m == "stdin" || m == "sh" || m == "json" || m == "raw" || isGitHubFileMode(m) || m == "ado"
 }
 
+func requireMappings(cmd string, mappings []ds.Mapping) error {
+	if len(mappings) == 0 {
+		return &cli.UsageError{Msg: fmt.Sprintf("%s requires at least one MAPPING", cmd)}
+	}
+	return nil
+}
+
 func isGitHubFileMode(m string) bool { return m == "github-env" || m == "github-output" }
 
 // exportsToEnvironment reports whether a print --via mode injects its output into
@@ -1053,6 +1066,9 @@ func cmdTemplate(args []string, readme string) error {
 	}
 	if len(p.passEnv) > 0 {
 		return fmt.Errorf("--pass-env applies only to run, which launches a child process")
+	}
+	if err := requireMappings("template", p.mappings); err != nil {
+		return err
 	}
 	if err := checkSink(out, allowTerminal); err != nil {
 		return err
