@@ -615,7 +615,10 @@ func TestRefuseBaselineShadowing(t *testing.T) {
 	// variables — a secret must not steer how the child loads code.
 	for _, name := range []string{
 		"LD_PRELOAD", "DYLD_INSERT_LIBRARIES", "DYLD_FALLBACK_LIBRARY_PATH",
-		"DYLD_FRAMEWORK_PATH", "DYLD_FALLBACK_FRAMEWORK_PATH", "BASH_ENV", "NODE_OPTIONS",
+		"DYLD_FRAMEWORK_PATH", "DYLD_FALLBACK_FRAMEWORK_PATH", "BASH_ENV", "PROMPT_COMMAND", "ZDOTDIR",
+		"GIT_SSH_COMMAND", "GIT_EXTERNAL_DIFF", "GIT_PAGER", "GIT_EDITOR", "GIT_ASKPASS",
+		"PAGER", "MANPAGER", "SYSTEMD_PAGER", "EDITOR", "VISUAL", "SSH_ASKPASS", "SUDO_ASKPASS",
+		"LESSOPEN", "LESSCLOSE", "MAKEFLAGS", "BROWSER", "NODE_OPTIONS",
 		"JAVA_TOOL_OPTIONS", "_JAVA_OPTIONS", "JDK_JAVA_OPTIONS", "CLASSPATH",
 		"GCONV_PATH", "PYTHONHOME", "NODE_PATH", "RUBYLIB", "PERLLIB",
 		"LUA_PATH", "LUA_CPATH", "DOTNET_STARTUP_HOOKS",
@@ -666,7 +669,10 @@ func TestRefuseUnsafeExports(t *testing.T) {
 	// code-loading names are refused on every OS; PATH is a baseline name on
 	// every OS.
 	for _, name := range []string{
-		"PATH", "LD_PRELOAD", "BASH_ENV", "NODE_OPTIONS",
+		"PATH", "LD_PRELOAD", "BASH_ENV", "PROMPT_COMMAND", "ZDOTDIR",
+		"GIT_SSH_COMMAND", "GIT_EXTERNAL_DIFF", "GIT_PAGER", "GIT_EDITOR", "GIT_ASKPASS",
+		"PAGER", "MANPAGER", "SYSTEMD_PAGER", "EDITOR", "VISUAL", "SSH_ASKPASS", "SUDO_ASKPASS",
+		"LESSOPEN", "LESSCLOSE", "MAKEFLAGS", "BROWSER", "NODE_OPTIONS",
 		"JAVA_TOOL_OPTIONS", "_JAVA_OPTIONS", "JDK_JAVA_OPTIONS", "CLASSPATH",
 		"GCONV_PATH", "PYTHONHOME", "NODE_PATH", "RUBYLIB", "PERLLIB",
 		"LUA_PATH", "LUA_CPATH", "DOTNET_STARTUP_HOOKS",
@@ -693,7 +699,7 @@ func TestRefuseUnsafeExports(t *testing.T) {
 func TestExportsToEnvironment(t *testing.T) {
 	want := map[string]bool{
 		"sh": true, "github-env": true,
-		"stdin": false, "json": false, "raw": false, "ado": false,
+		"stdin": false, "json": false, "raw": false, "github-output": false, "ado": false,
 	}
 	for mode, w := range want {
 		if got := exportsToEnvironment(mode); got != w {
@@ -863,7 +869,7 @@ func TestValidModes(t *testing.T) {
 	if validRunMode("json") {
 		t.Errorf("validRunMode(json) = true; json is print-only")
 	}
-	for _, m := range []string{"stdin", "sh", "json", "raw", "github-env", "ado"} {
+	for _, m := range []string{"stdin", "sh", "json", "raw", "github-env", "github-output", "ado"} {
 		if !validPrintMode(m) {
 			t.Errorf("validPrintMode(%q) = false, want true", m)
 		}
@@ -900,6 +906,10 @@ func TestFormatJSONRaw(t *testing.T) {
 	adoPayload := payloadFor("ado", []ds.Var{{Name: "DB_PASS", Value: "s3cr3t"}})
 	if got, want := string(adoPayload), "##vso[task.setsecret]s3cr3t\n##vso[task.setvariable variable=DB_PASS;issecret=true]s3cr3t\n"; got != want {
 		t.Errorf("ado payload: got %q, want %q", got, want)
+	}
+	githubOutput := payloadFor("github-output", []ds.Var{{Name: "GITHUB_WORKSPACE", Value: "result"}})
+	if got, want := string(githubOutput), "GITHUB_WORKSPACE<<DELINEA_EOF\nresult\nDELINEA_EOF\n"; got != want {
+		t.Errorf("github-output payload: got %q, want %q", got, want)
 	}
 }
 
@@ -975,11 +985,35 @@ func TestCheckDeliverable(t *testing.T) {
 	if err := checkDeliverable("print", "json", notUTF8); err == nil || !strings.Contains(err.Error(), "BLOB") {
 		t.Errorf("json with invalid UTF-8: got %v, want a rejection naming BLOB (it would be silently corrupted)", err)
 	}
-	if err := checkDeliverable("print", "github-env", notUTF8); err == nil || !strings.Contains(err.Error(), "BLOB") || !strings.Contains(err.Error(), "raw") {
-		t.Errorf("github-env with invalid UTF-8: got %v, want a rejection naming BLOB and the raw remedy", err)
+	if err := checkDeliverable("print", "github-env", notUTF8); err == nil || !strings.Contains(err.Error(), "BLOB") || strings.Contains(err.Error(), "raw") {
+		t.Errorf("github-env with invalid UTF-8: got %v, want a rejection naming BLOB without recommending unmasked raw output", err)
 	}
-	if err := checkDeliverable("print", "ado", notUTF8); err == nil || !strings.Contains(err.Error(), "BLOB") || !strings.Contains(err.Error(), "raw") {
-		t.Errorf("ado with invalid UTF-8: got %v, want a rejection naming BLOB and the raw remedy", err)
+	if err := checkDeliverable("print", "github-output", notUTF8); err == nil || !strings.Contains(err.Error(), "BLOB") || strings.Contains(err.Error(), "raw") {
+		t.Errorf("github-output with invalid UTF-8: got %v, want a rejection naming BLOB without recommending unmasked raw output", err)
+	}
+	if err := checkDeliverable("print", "github-env", []ds.Var{{Name: "GITHUB_WORKSPACE", Value: "x"}}); err == nil || !strings.Contains(err.Error(), "reserved") {
+		t.Errorf("github-env reserved name: got %v, want a reserved-name refusal", err)
+	}
+	if err := checkDeliverable("print", "github-output", []ds.Var{{Name: "GITHUB_WORKSPACE", Value: "x"}}); err != nil {
+		t.Errorf("github-output environment-reserved name: got %v, want nil", err)
+	}
+	if err := checkDeliverable("print", "github-output", []ds.Var{{Name: "TOKEN", Value: "a"}, {Name: "token", Value: "b"}}); err == nil || !strings.Contains(err.Error(), "case-insensitive") || strings.Contains(err.Error(), "raw") {
+		t.Errorf("github-output case-insensitive duplicates: got %v, want a refusal without the inapplicable raw remedy", err)
+	}
+	if err := checkDeliverable("print", "github-env", []ds.Var{{Name: "TOKEN", Value: "a"}, {Name: "token", Value: "b"}}); err == nil || !strings.Contains(err.Error(), "case-insensitive") || strings.Contains(err.Error(), "raw") {
+		t.Errorf("github-env case-insensitive duplicates: got %v, want a portable refusal without the inapplicable raw remedy", err)
+	}
+	if err := checkDeliverable("print", "ado", []ds.Var{{Name: "TOKEN", Value: "a"}, {Name: "token", Value: "b"}}); err == nil || !strings.Contains(err.Error(), "case-insensitive") {
+		t.Errorf("ado case-insensitive duplicates: got %v, want a refusal", err)
+	}
+	if err := checkDeliverable("print", "ado", []ds.Var{{Name: "SECRET_VALUE", Value: "x"}}); err == nil || !strings.Contains(err.Error(), "reserved") || strings.Contains(err.Error(), "raw") {
+		t.Errorf("ado reserved name: got %v, want a refusal without the inapplicable raw remedy", err)
+	}
+	if err := checkDeliverable("print", "ado", notUTF8); err == nil || !strings.Contains(err.Error(), "BLOB") || strings.Contains(err.Error(), "raw") {
+		t.Errorf("ado with invalid UTF-8: got %v, want a rejection naming BLOB without recommending unmasked raw output", err)
+	}
+	if err := checkDeliverable("print", "ado", []ds.Var{{Name: "GOOD", Value: "x"}, {Name: "MULTI", Value: "a\nb"}}); err == nil || strings.Contains(err.Error(), "raw") {
+		t.Errorf("ado batch with an unrepresentable value: got %v, want a refusal without a raw mode that cannot carry the batch", err)
 	}
 	if err := checkDeliverable("print", "ado", []ds.Var{{Name: "MULTI", Value: "a\nb"}}); err == nil || !strings.Contains(err.Error(), "multiline") {
 		t.Errorf("ado with multiline value: got %v, want a multiline refusal", err)
@@ -992,7 +1026,7 @@ func TestCheckDeliverable(t *testing.T) {
 	} else if !envRequiresUTF8 && err != nil {
 		t.Errorf("Unix env with non-NUL bytes: got %v, want nil", err)
 	}
-	for _, mode := range []string{"env", "stdin", "sh", "raw", "json", "github-env", "ado"} {
+	for _, mode := range []string{"env", "stdin", "sh", "raw", "json", "github-env", "github-output", "ado"} {
 		if err := checkDeliverable("print", mode, []ds.Var{{Name: "A", Value: "no nul here"}}); err != nil {
 			t.Errorf("--via %s clean value: got %v, want nil", mode, err)
 		}

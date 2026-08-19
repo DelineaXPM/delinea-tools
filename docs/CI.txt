@@ -26,8 +26,11 @@ GITHUB ACTIONS
 
 Get the tool with go run (no install) or install it once onto PATH:
 
-    go run github.com/DelineaXPM/delinea-tools/cmd/delinea-util@latest ...
-    # or: go install github.com/DelineaXPM/delinea-tools/cmd/delinea-util@latest
+    go run github.com/DelineaXPM/delinea-tools/cmd/delinea-util@v1.1.4 ...
+    # or: go install github.com/DelineaXPM/delinea-tools/cmd/delinea-util@v1.1.4
+
+Pin a reviewed release in CI rather than using @latest, so a future tool update
+cannot enter a secret-bearing pipeline without the repository reviewing it.
 
 Set DELINEA_TOOLS_URL and one credential from your repository secrets (a
 Secret Server username/password pair, a Platform CLIENT_ID/CLIENT_SECRET, or a
@@ -60,6 +63,28 @@ against a test tenant, lives in .github/workflows/consumer-example.yml.
 GitHub environment files carry valid UTF-8 and LF line breaks; this formatter
 refuses NUL and carriage returns. Normalize CRLF text first, or use scoped run or
 same-step raw file delivery when the value cannot be represented as Unix text.
+The environment sink cannot override GitHub's GITHUB_* or RUNNER_* defaults and
+GitHub blocks NODE_OPTIONS, so github-env refuses those names instead of
+reporting success for a value the runner will not establish. Both GitHub modes
+also refuse names that differ only by case, keeping the payload portable to
+Windows runners where environment names are case-insensitive.
+
+For a named step output, use the separate output mode; output names do not share
+the environment sink's reserved-name rules. Output identity is case-insensitive,
+so mappings such as TOKEN and token are rejected rather than overwriting one
+another:
+
+    - name: load a secret output
+      id: secret
+      env: { DELINEA_TOOLS_URL: ..., DELINEA_TOOLS_USERNAME: ..., DELINEA_TOOLS_PASSWORD: ... }
+      run: delinea-util secrets print --via github-output --out "$GITHUB_OUTPUT" APP_SECRET=password#128
+    - name: consume it later in the same job
+      env:
+        APP_SECRET: ${{ steps.secret.outputs.APP_SECRET }}
+      run: deploy --token "$APP_SECRET"
+
+Both GitHub modes emit masks before appending their command file. Do not promote
+a secret step output to a cross-job output; fetch it again in the consuming job.
 
 
 AZURE PIPELINES
@@ -109,7 +134,9 @@ secret across job boundaries.
 
 Azure also reserves variable names beginning, case-insensitively, with endpoint,
 input, secret, path, or securefile. --via ado refuses those prefixes; choose a
-different mapping name such as APP_SECRET or DEPLOY_PATH.
+different mapping name such as APP_SECRET or DEPLOY_PATH. Variable identity is
+case-insensitive too, so mappings such as TOKEN and token are rejected as
+duplicates before any logging command is emitted.
 
 Masking is a best-effort agent feature, not permission control. Azure does not
 mask substrings or fields within structured data, and an agent can be configured

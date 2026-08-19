@@ -52,14 +52,14 @@ func (f *apiFetcher) CloseIdleConnections() { f.c.CloseIdleConnections() }
 func (f *apiFetcher) String() string { return f.c.String() }
 
 func (f *apiFetcher) Secret(ctx context.Context, id int) (*Secret, error) {
-	return f.fetch(ctx, "/api/v1/secrets/"+strconv.Itoa(id))
+	return f.fetch(ctx, "/api/v1/secrets/"+strconv.Itoa(id), id)
 }
 
 func (f *apiFetcher) SecretByPath(ctx context.Context, path string) (*Secret, error) {
-	return f.fetch(ctx, "/api/v1/secrets/0?secretPath="+url.QueryEscape(path))
+	return f.fetch(ctx, "/api/v1/secrets/0?secretPath="+url.QueryEscape(path), 0)
 }
 
-func (f *apiFetcher) fetch(ctx context.Context, path string) (*Secret, error) {
+func (f *apiFetcher) fetch(ctx context.Context, path string, expectedID int) (*Secret, error) {
 	data, err := f.get(ctx, path)
 	if err != nil {
 		return nil, err
@@ -67,6 +67,12 @@ func (f *apiFetcher) fetch(ctx context.Context, path string) (*Secret, error) {
 	var s Secret
 	if err := json.Unmarshal(data, &s); err != nil {
 		return nil, fmt.Errorf("%w: parsing it: %v (does the URL point at a Secret Server or vault API?)", errBadResponse, err)
+	}
+	if s.ID <= 0 {
+		return nil, fmt.Errorf("%w: secret response has invalid id %d", errBadResponse, s.ID)
+	}
+	if expectedID > 0 && s.ID != expectedID {
+		return nil, fmt.Errorf("%w: requested secret %d but the response identified secret %d", errBadResponse, expectedID, s.ID)
 	}
 	downloaded, total := 0, 0
 	for i, fld := range s.Fields {

@@ -203,6 +203,66 @@ func TestLocalPrintGitHubEnvRequiresOut(t *testing.T) {
 	}
 }
 
+func TestLocalPrintGitHubModesApplySinkSpecificNameRules(t *testing.T) {
+	srv := loopbackSS(t)
+	clearDelineaEnv(t)
+	t.Setenv("DELINEA_TOOLS_URL", srv.URL)
+	t.Setenv("DELINEA_TOOLS_USERNAME", "svc")
+
+	envFile := filepath.Join(t.TempDir(), "github.env")
+	out, err := runInProcess(t, "pw\n", "print", "--secret-stdin", "--via", "github-env", "--out", envFile, "GITHUB_WORKSPACE=password#128")
+	if err == nil || !strings.Contains(err.Error(), "reserved") {
+		t.Fatalf("github-env: got output %q, error %v; want a reserved-name refusal", out, err)
+	}
+	if _, statErr := os.Stat(envFile); !os.IsNotExist(statErr) {
+		t.Errorf("github-env created its output on validation failure: %v", statErr)
+	}
+
+	foldedFile := filepath.Join(t.TempDir(), "github-folded.env")
+	out, err = runInProcess(t, "pw\n", "print", "--secret-stdin", "--via", "github-env", "--out", foldedFile,
+		"TOKEN=password#128", "token=username#128")
+	if err == nil {
+		t.Fatalf("github-env case-folded collision: got output %q, want a refusal", out)
+	}
+	if out != "" {
+		t.Errorf("github-env case-folded refusal reached stdout: %q", out)
+	}
+	if _, statErr := os.Stat(foldedFile); !os.IsNotExist(statErr) {
+		t.Errorf("github-env created its output on case-folded validation failure: %v", statErr)
+	}
+
+	outputFile := filepath.Join(t.TempDir(), "github.output")
+	masks, err := runInProcess(t, "pw\n", "print", "--secret-stdin", "--via", "github-output", "--out", outputFile, "GITHUB_WORKSPACE=password#128")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if masks != "::add-mask::s3cr3t\n" {
+		t.Errorf("github-output masks: got %q", masks)
+	}
+	data, err := os.ReadFile(outputFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "GITHUB_WORKSPACE<<DELINEA_EOF\ns3cr3t\nDELINEA_EOF\n"; string(data) != want {
+		t.Errorf("github-output file: got %q, want %q", data, want)
+	}
+}
+
+func TestLocalPrintGitHubOutputRequiresOut(t *testing.T) {
+	srv := loopbackSS(t)
+	clearDelineaEnv(t)
+	t.Setenv("DELINEA_TOOLS_URL", srv.URL)
+	t.Setenv("DELINEA_TOOLS_USERNAME", "svc")
+
+	out, err := runInProcess(t, "pw\n", "print", "--via", "github-output", "DB=password#128")
+	if err == nil || !strings.Contains(err.Error(), "$GITHUB_OUTPUT") {
+		t.Errorf("got %v, want a refusal naming $GITHUB_OUTPUT", err)
+	}
+	if out != "" {
+		t.Errorf("nothing may reach stdout on refusal, got %q", out)
+	}
+}
+
 func TestLocalPrintADO(t *testing.T) {
 	srv := loopbackSS(t)
 	clearDelineaEnv(t)

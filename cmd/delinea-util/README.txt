@@ -452,12 +452,14 @@ print --out, or redirecting print). Secret values are never passed as
 arguments — only references (ids, paths, field names) are — and a run child
 receives a declared environment rather than an inherited one, so the credential
 cannot leak downstream. On Unix, run exec-replaces the CLI with your program,
-so the secrets leave memory the moment the child takes over (a --via stdin
-payload larger than a pipe holds, about 60KB, cannot be prebuffered ahead of
-exec, so run then spawns the child and streams, exactly as on Windows).
+so the CLI's copies leave memory when the child takes over. Delivered values
+still live in the child's environment or stdin pipe as described under SECRETS
+SAFETY (a --via stdin payload larger than a pipe holds, about 60KB, cannot be
+prebuffered ahead of exec, so run then spawns the child and streams, exactly as
+on Windows).
 
   delinea-util secrets run      [--via env|stdin|sh] [--pass-env NAME]... MAPPING... -- command [args...]
-  delinea-util secrets print    [--via stdin|sh|json|raw|github-env|ado] [--out FILE] [--allow-terminal] MAPPING...
+  delinea-util secrets print    [--via stdin|sh|json|raw|github-env|github-output|ado] [--out FILE] [--allow-terminal] MAPPING...
   delinea-util secrets template --in FILE [--out FILE] [--allow-terminal] MAPPING...
   delinea-util secrets --readme | --tree | help
 
@@ -509,13 +511,20 @@ Delivery (--via):
           valid UTF-8 — use raw for binary values, which JSON would corrupt)
   raw     the one secret value, verbatim, no name (print only; exactly one mapping)
   github-env
-          $GITHUB_ENV / $GITHUB_OUTPUT heredocs (print only; LF-delimited
-          multiline values carry intact; values must be valid UTF-8 without
-          NUL or carriage returns). Requires --out (usually
-          --out "$GITHUB_ENV"), which appends, preserving entries from earlier
-          step commands. An ::add-mask:: line per secret line goes to stdout
-          first, so the runner masks the values in job logs before anything
-          can echo them
+          $GITHUB_ENV heredocs (print only). GitHub-reserved GITHUB_* and
+          RUNNER_* names and NODE_OPTIONS are refused rather than written to a
+          sink that cannot override them. Names differing only by case are
+          refused so the payload has the same meaning on Windows runners
+  github-output
+          $GITHUB_OUTPUT heredocs (print only). Output names do not inherit the
+          environment sink's reserved-name rules, but they compare
+          case-insensitively, so TOKEN and token are refused as duplicates.
+          Both GitHub modes carry LF-delimited multiline values intact and
+          require valid UTF-8 without NUL or carriage returns. Both require --out (usually --out
+          "$GITHUB_ENV" or --out "$GITHUB_OUTPUT") and append, preserving
+          entries from earlier step commands. An ::add-mask:: line per secret
+          line goes to stdout first, so the runner masks values in job logs
+          before anything can echo them
   ado     Azure Pipelines task.setsecret and secret task.setvariable commands
           (print only; stdout only). Values become secret pipeline variables
           for subsequent steps in the same job and must be valid UTF-8 without
@@ -603,12 +612,15 @@ not an environment variable until it is exported ("export FOO" in a POSIX shell,
 "$env:FOO" rather than "$FOO" in PowerShell); an unexported variable is invisible
 here however plainly you set it.
 
-Resolved secrets also cannot define variables that cause a child to load or
-execute code, including dynamic-loader, shell-startup, language-runtime, and JVM
-controls such as LD_PRELOAD, BASH_ENV, PYTHONPATH, NODE_OPTIONS,
-JAVA_TOOL_OPTIONS, _JAVA_OPTIONS, JDK_JAVA_OPTIONS, CLASSPATH, GCONV_PATH,
-language module paths, and .NET startup/profiling hooks. Use --pass-env for an
-operator-controlled runtime setting instead of sourcing its value from a secret.
+Resolved secrets are refused for a conservative set of well-known variables
+that cause a child to load or execute code, including dynamic-loader,
+shell-startup, Git command, pager/editor, askpass, language-runtime, and JVM
+controls such as LD_PRELOAD, BASH_ENV, PROMPT_COMMAND, GIT_SSH_COMMAND,
+PYTHONPATH, NODE_OPTIONS, JAVA_TOOL_OPTIONS, CLASSPATH, GCONV_PATH, language
+module paths, and .NET startup/profiling hooks. This guard is defense-in-depth,
+not a sandbox: the operator still controls mapping names and the command. Use
+--pass-env for an operator-controlled runtime setting instead of sourcing its
+value from a secret.
 
 Run "delinea-util check" to see exactly what a run child would receive.
 
@@ -788,6 +800,11 @@ in the job log before anything can echo them.
       DELINEA_TOOLS_CLIENT_ID: ${{ secrets.DELINEA_CLIENT_ID }}
       DELINEA_TOOLS_CLIENT_SECRET: ${{ secrets.DELINEA_CLIENT_SECRET }}
     run: delinea-util secrets print --via github-env --out "$GITHUB_ENV" DB_PASS=password#128
+
+Use --via github-output --out "$GITHUB_OUTPUT" when the value must be a named
+step output instead. Environment delivery rejects GitHub's GITHUB_* and RUNNER_*
+names plus NODE_OPTIONS; output names have a separate namespace and do not.
+Both modes reject names that differ only by case.
 
 Azure Pipelines: prefer "secrets run" in a bash step when it can wrap the
 consumer. For a marketplace task that needs a pipeline variable, --via ado
@@ -1008,8 +1025,9 @@ Credential on stdin:
     or pipe from a byte-clean source. cmd.exe and POSIX shells pass bytes through
     unchanged.
   - secrets print --out / template --out write at mode 0600 (on Unix) and only
-    after a successful fetch or render. github-env appends to its shared command
-    file; ado is stdout-only; other modes atomically replace regular files.
+    after a successful fetch or render. github-env and github-output append to
+    their shared command files; ado is stdout-only; other modes atomically
+    replace regular files.
     Prefer --out over a '>' redirect, which uses the shell umask and is
     re-encoded by PowerShell.
 

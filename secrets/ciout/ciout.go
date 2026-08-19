@@ -46,25 +46,62 @@ func Shell(vars []secrets.Var) (string, error) {
 	return b.String(), nil
 }
 
-// GitHubEnv renders the $GITHUB_ENV file format — which is also the
-// $GITHUB_OUTPUT format — using a heredoc per variable, so multiline values
-// carry intact. The delimiter is chosen deterministically to never collide
-// with the value. Invalid UTF-8, NUL, and carriage returns are refused; the
-// runner reads the file as UTF-8 Unix text.
+// GitHubEnv renders the $GITHUB_ENV file format using a heredoc per variable,
+// so multiline values carry intact. GitHub's GITHUB_* and RUNNER_* namespaces,
+// and NODE_OPTIONS, are refused because the runner does not permit an
+// environment command to override them. Use GitHubOutput for $GITHUB_OUTPUT,
+// whose names do not have those environment-specific restrictions.
 func GitHubEnv(vars []secrets.Var) (string, error) {
 	if err := checkNames(vars); err != nil {
 		return "", err
 	}
+	// Keep the formatter portable across runner operating systems. Windows
+	// environment names are case-insensitive, and accepting TOKEN plus token on
+	// another OS would make the same payload change meaning when moved there.
+	if err := checkFoldedNames(vars, "GitHub Actions environment"); err != nil {
+		return "", err
+	}
+	for _, v := range vars {
+		upper := strings.ToUpper(v.Name)
+		switch {
+		case strings.HasPrefix(upper, "GITHUB_"), strings.HasPrefix(upper, "RUNNER_"):
+			return "", fmt.Errorf("%s uses a GitHub-reserved environment-variable namespace", v.Name)
+		case upper == "NODE_OPTIONS":
+			return "", fmt.Errorf("%s cannot be set through GITHUB_ENV because GitHub blocks it for security", v.Name)
+		}
+	}
+	return githubFile(vars)
+}
+
+// GitHubOutput renders the $GITHUB_OUTPUT file format. It shares GitHubEnv's
+// wire encoding but deliberately does not apply environment-variable reserved
+// names: output parameters are addressed through steps.<id>.outputs, not
+// installed into the runner environment.
+func GitHubOutput(vars []secrets.Var) (string, error) {
+	if err := checkNames(vars); err != nil {
+		return "", err
+	}
+	if err := checkFoldedNames(vars, "GitHub Actions output"); err != nil {
+		return "", err
+	}
+	return githubFile(vars)
+}
+
+// githubFile renders the command-file encoding shared by GITHUB_ENV and
+// GITHUB_OUTPUT. The delimiter is chosen deterministically to never collide
+// with the value. Invalid UTF-8, NUL, and carriage returns are refused; the
+// runner reads command files as UTF-8 Unix text.
+func githubFile(vars []secrets.Var) (string, error) {
 	var b strings.Builder
 	for _, v := range vars {
 		if !utf8.ValidString(v.Value) {
-			return "", fmt.Errorf("%s is not valid UTF-8, which a GitHub environment file cannot carry intact", v.Name)
+			return "", fmt.Errorf("%s is not valid UTF-8, which a GitHub command file cannot carry intact", v.Name)
 		}
 		if strings.IndexByte(v.Value, 0) >= 0 {
-			return "", fmt.Errorf("%s contains a NUL byte, which a GitHub environment file cannot carry", v.Name)
+			return "", fmt.Errorf("%s contains a NUL byte, which a GitHub command file cannot carry", v.Name)
 		}
 		if strings.ContainsRune(v.Value, '\r') {
-			return "", fmt.Errorf("%s contains a carriage return, which would corrupt the GitHub environment file", v.Name)
+			return "", fmt.Errorf("%s contains a carriage return, which would corrupt the GitHub command file", v.Name)
 		}
 		// Choose a heredoc delimiter that is on no line of the value. Collect
 		// the value's lines once — not once per candidate — so a value crafted
@@ -123,9 +160,13 @@ func GitHubMask(vars []secrets.Var) (string, error) {
 // weakens the agent's masking guarantees. Values must also be valid UTF-8
 // without NUL because logging commands travel over the agent's UTF-8 text stream.
 // Variable names beginning with Azure's reserved endpoint, input, secret, path,
-// or securefile prefixes are refused case-insensitively.
+// or securefile prefixes are refused case-insensitively. Names also compare
+// case-insensitively for duplicate detection, matching the agent's variable map.
 func AzurePipelines(vars []secrets.Var) (string, error) {
 	if err := checkNames(vars); err != nil {
+		return "", err
+	}
+	if err := checkFoldedNames(vars, "Azure Pipelines"); err != nil {
 		return "", err
 	}
 	for _, v := range vars {
@@ -195,6 +236,20 @@ func checkNames(vars []secrets.Var) error {
 			return fmt.Errorf("two variables named %s; the later value would silently win", v.Name)
 		}
 		seen[v.Name] = true
+	}
+	return nil
+}
+
+// checkFoldedNames rejects names that a case-insensitive sink treats as one
+// variable. Allowing FOO and foo would silently let the latter win.
+func checkFoldedNames(vars []secrets.Var, sink string) error {
+	seen := make(map[string]string, len(vars))
+	for _, v := range vars {
+		key := strings.ToUpper(v.Name)
+		if prior, ok := seen[key]; ok {
+			return fmt.Errorf("%s and %s are the same case-insensitive %s variable; the later value would silently win", prior, v.Name, sink)
+		}
+		seen[key] = v.Name
 	}
 	return nil
 }

@@ -96,6 +96,45 @@ func TestFetcherSecretByPath(t *testing.T) {
 	}
 }
 
+func TestFetcherRejectsInvalidOrMismatchedSecretID(t *testing.T) {
+	tests := []struct {
+		name       string
+		requestID  int
+		responseID int
+		byPath     bool
+	}{
+		{name: "id response missing id", requestID: 126},
+		{name: "id response names another secret", requestID: 126, responseID: 127},
+		{name: "path response missing id", byPath: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			attachmentCalls := 0
+			srv := ssServer(t, func(w http.ResponseWriter, r *http.Request) {
+				if strings.Contains(r.URL.Path, "/fields/") {
+					attachmentCalls++
+					http.Error(w, "attachment request must not be sent", http.StatusInternalServerError)
+					return
+				}
+				fmt.Fprintf(w, `{"id":%d,"items":[{"fieldName":"Key","slug":"key","isFile":true,"fileAttachmentId":12,"filename":"key.pem"}]}`, tt.responseID)
+			})
+			c := ssClient(t, srv.URL)
+			var err error
+			if tt.byPath {
+				_, err = c.SecretByPath(context.Background(), `\ci\key`)
+			} else {
+				_, err = c.Secret(context.Background(), tt.requestID)
+			}
+			if !errors.Is(err, errBadResponse) {
+				t.Errorf("got %v, want errBadResponse", err)
+			}
+			if attachmentCalls != 0 {
+				t.Errorf("attachment requests: got %d, want 0", attachmentCalls)
+			}
+		})
+	}
+}
+
 func TestFetcherDownloadsFileFields(t *testing.T) {
 	srv := ssServer(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {

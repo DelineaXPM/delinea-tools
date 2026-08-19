@@ -316,7 +316,7 @@ func cmdPrint(args []string, readme string) error {
 		return err
 	}
 	if !validPrintMode(p.mode) {
-		return fmt.Errorf("print --via must be stdin, sh, json, raw, github-env, or ado (got %q)", p.mode)
+		return fmt.Errorf("print --via must be stdin, sh, json, raw, github-env, github-output, or ado (got %q)", p.mode)
 	}
 	if len(p.passEnv) > 0 {
 		return fmt.Errorf("--pass-env applies only to run, which launches a child process")
@@ -324,13 +324,17 @@ func cmdPrint(args []string, readme string) error {
 	if p.mode == "ado" && out != "" {
 		return &cli.UsageError{Msg: "--via ado writes Azure Pipelines logging commands to stdout, where the agent reads them; it cannot be used with --out"}
 	}
-	if p.mode == "github-env" {
+	if isGitHubFileMode(p.mode) {
 		// The mode's contract is masks-then-values, and the masks go to the
 		// step's stdout — writing the payload to stdout instead would mix the
 		// two streams or, worse, deliver unmasked values. Requiring --out is
 		// what keeps the "already masked in job logs" promise true.
 		if out == "" {
-			return &cli.UsageError{Msg: "--via github-env requires --out FILE (usually --out \"$GITHUB_ENV\"); the ::add-mask:: lines go to stdout"}
+			commandFile := "$GITHUB_ENV"
+			if p.mode == "github-output" {
+				commandFile = "$GITHUB_OUTPUT"
+			}
+			return &cli.UsageError{Msg: fmt.Sprintf("--via %s requires --out FILE (usually --out \"%s\"); the ::add-mask:: lines go to stdout", p.mode, commandFile)}
 		}
 		// Stdout carries the masks — secret values — so the terminal guard
 		// applies to it too, before any credential is spent or secret fetched.
@@ -365,7 +369,7 @@ func cmdPrint(args []string, readme string) error {
 		}
 	}
 	payload := payloadFor(p.mode, vars)
-	if p.mode == "github-env" {
+	if isGitHubFileMode(p.mode) {
 		// Masks first, on stdout, so the runner registers them before the
 		// values exist anywhere it might echo; then append — GitHub command
 		// files are an append protocol shared by every step command.
@@ -717,15 +721,17 @@ func checkDeliverable(cmd, mode string, vars []ds.Var) error {
 		// a dead end.
 		nulRemedy = "run has no delivery mode for it; write it with print --via raw or a template --out file instead"
 	}
-	if mode == "github-env" || mode == "ado" {
+	if isGitHubFileMode(mode) || mode == "ado" {
 		// The formatter owns the format's constraints; run it once for the
 		// verdict and keep its variable-naming errors verbatim.
 		format := ciout.GitHubEnv
-		if mode == "ado" {
+		if mode == "github-output" {
+			format = ciout.GitHubOutput
+		} else if mode == "ado" {
 			format = ciout.AzurePipelines
 		}
 		if _, err := format(vars); err != nil {
-			return fmt.Errorf("--via %s: %w (use --via raw instead)", mode, err)
+			return fmt.Errorf("--via %s: %w", mode, err)
 		}
 		return nil
 	}
@@ -751,19 +757,23 @@ func checkDeliverable(cmd, mode string, vars []ds.Var) error {
 	return nil
 }
 
-// unsafeChildVars are environment variable names that steer how a child loads
-// or executes code — dynamic linker, shell startup, language interpreter. A
-// value for one of these controls the child, so defining it from a secret
-// (whose value another party may control) is refused even though the operator
-// chose the name. This closes the gap the baseline check leaves: these are not
-// baseline variables, so they would otherwise pass. Keys must be upper case:
-// they are looked up through envNameKey, which upper-folds on Windows where
-// the child's environment is case-insensitive.
+// unsafeChildVars are well-known environment variable names that steer how a
+// child loads or executes code — dynamic linker, shell startup, command hooks,
+// pagers/editors, and language interpreters. A value for one of these controls
+// the child, so defining it from a secret (whose value another party may
+// control) is refused even though the operator chose the name. This is
+// defense-in-depth rather than a sandbox: the operator still owns the mapping
+// names and command. Keys must be upper case; envNameKey folds on Windows.
 var unsafeChildVars = map[string]bool{
 	"LD_PRELOAD": true, "LD_LIBRARY_PATH": true, "LD_AUDIT": true, "GCONV_PATH": true,
 	"DYLD_INSERT_LIBRARIES": true, "DYLD_LIBRARY_PATH": true, "DYLD_FALLBACK_LIBRARY_PATH": true,
 	"DYLD_FRAMEWORK_PATH": true, "DYLD_FALLBACK_FRAMEWORK_PATH": true,
 	"BASH_ENV": true, "ENV": true, "SHELLOPTS": true, "PS4": true, "IFS": true,
+	"PROMPT_COMMAND": true, "ZDOTDIR": true,
+	"GIT_SSH_COMMAND": true, "GIT_EXTERNAL_DIFF": true, "GIT_PAGER": true, "GIT_EDITOR": true, "GIT_ASKPASS": true,
+	"PAGER": true, "MANPAGER": true, "SYSTEMD_PAGER": true, "EDITOR": true, "VISUAL": true,
+	"SSH_ASKPASS": true, "SUDO_ASKPASS": true, "LESSOPEN": true, "LESSCLOSE": true,
+	"MAKEFLAGS": true, "BROWSER": true,
 	"PYTHONPATH": true, "PYTHONHOME": true, "PYTHONSTARTUP": true,
 	"PERL5LIB": true, "PERLLIB": true, "PERL5OPT": true,
 	"NODE_OPTIONS": true, "NODE_PATH": true,
@@ -830,13 +840,15 @@ func payloadFor(mode string, vars []ds.Var) []byte {
 		}
 		return nil
 	}
-	if mode == "sh" || mode == "github-env" || mode == "ado" {
+	if mode == "sh" || isGitHubFileMode(mode) || mode == "ado" {
 		// checkDeliverable already refused what these formats refuse, and
 		// mapping parsing refused invalid or duplicate names, so this cannot
 		// fail here; the fallback keeps a future drift loud instead of silent.
 		format := ciout.Shell
 		if mode == "github-env" {
 			format = ciout.GitHubEnv
+		} else if mode == "github-output" {
+			format = ciout.GitHubOutput
 		} else if mode == "ado" {
 			format = ciout.AzurePipelines
 		}
@@ -962,8 +974,10 @@ func parseArgs(cmd string, args []string, defaultMode string, wantCommand bool) 
 
 func validRunMode(m string) bool { return m == "env" || m == "stdin" || m == "sh" }
 func validPrintMode(m string) bool {
-	return m == "stdin" || m == "sh" || m == "json" || m == "raw" || m == "github-env" || m == "ado"
+	return m == "stdin" || m == "sh" || m == "json" || m == "raw" || isGitHubFileMode(m) || m == "ado"
 }
+
+func isGitHubFileMode(m string) bool { return m == "github-env" || m == "github-output" }
 
 // exportsToEnvironment reports whether a print --via mode injects its output into
 // an environment that later loads code — an operator shell (sh, via eval) or a

@@ -72,6 +72,9 @@ func TestCommandHelpNamesItsOwnFlags(t *testing.T) {
 			}
 		}
 	}
+	if !strings.Contains(help["print"], "github-env, github-output") {
+		t.Error("print help does not distinguish GitHub environment and output modes")
+	}
 	// run has no --out and template has no --via; the Flags section must not
 	// imply otherwise. (Global Flags mention neither, so a plain Contains is safe.)
 	if strings.Contains(help["run"], "--out") {

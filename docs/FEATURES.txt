@@ -67,7 +67,7 @@ SECRET RETRIEVAL AND DELIVERY (secrets group)
   - Mapping syntax: NAME=field#id or NAME=field@\folder\path; PREFIX_*=#id
     expands every non-file field with a slug into PREFIX_<SLUG> variables.
   - Delivery modes (--via): env, stdin, and sh for run; stdin, sh, json, raw,
-    github-env, and ado for print.
+    github-env, github-output, and ado for print.
   - File-field (attachment) content is downloaded and substituted transparently;
     per-secret fan-out is capped by count and total bytes.
   - Collision safety: two mappings that would define the same variable are
@@ -100,7 +100,8 @@ THE GO LIBRARIES
   - secrets/secretstest: a map-backed Fetcher stub for consumer tests, encoding
     the real server's semantics (missing and denied both return ErrAccessDenied).
   - secrets/ciout: CI output formatters — Shell (export lines), GitHubEnv
-    ($GITHUB_ENV heredocs), GitHubMask (::add-mask:: per line), and
+    ($GITHUB_ENV heredocs with its reserved-name rules), GitHubOutput
+    ($GITHUB_OUTPUT heredocs), GitHubMask (::add-mask:: per line), and
     AzurePipelines (task.setsecret plus secret task.setvariable commands).
   - secrets/retrievejson: one strict parser for the shared CI retrieve-secrets
     JSON schema ([{secretId|secretPath, secretKey, outputVariable}]).
@@ -149,13 +150,19 @@ CI/CD INTEGRATION
   - GitHub Actions: "secrets print --via github-env --out $GITHUB_ENV" writes the
     variables and emits ::add-mask:: for every secret line to stdout first, so
     the runner masks the values before anything can echo them. Values must be
-    valid UTF-8 Unix text: NUL and carriage returns are refused.
+    valid UTF-8 Unix text: NUL and carriage returns are refused. GITHUB_*,
+    RUNNER_*, and NODE_OPTIONS names are refused for environment delivery;
+    "--via github-output --out $GITHUB_OUTPUT" provides the distinct step-output
+    namespace. Both modes reject names differing only by case, keeping output
+    deterministic across runner operating systems.
   - Azure Pipelines: "secrets print --via ado" writes mask-before-publication
     task.setsecret/task.setvariable commands to stdout for later steps in the
     same job. Values are secret pipeline variables and are not ambient script
     environment variables. Multiline values are refused because Azure's safe
     default agent configuration rejects multiline secret variables. Names may
-    not begin with Azure's endpoint, input, secret, path, or securefile prefixes.
+    not begin with Azure's endpoint, input, secret, path, or securefile prefixes,
+    and names differing only by case are refused because the agent treats them
+    as one variable.
   - GitLab CI: fetch secrets in the consuming job with "secrets run" or "--via sh"
     into eval. (There is deliberately no artifact-based delivery: a GitLab dotenv
     report is uploaded to the server and readable by pipeline users.)

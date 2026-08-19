@@ -104,6 +104,48 @@ func TestGitHubEnvRefusals(t *testing.T) {
 	}
 }
 
+func TestGitHubEnvReservedNames(t *testing.T) {
+	for _, name := range []string{"GITHUB_WORKSPACE", "github_custom", "RUNNER_OS", "runner_custom", "NODE_OPTIONS", "node_options"} {
+		if out, err := GitHubEnv([]secrets.Var{v(name, "x")}); err == nil || !strings.Contains(err.Error(), name) {
+			t.Errorf("%s: got output %q, error %v; want a name-specific refusal", name, out, err)
+		}
+		if _, err := GitHubOutput([]secrets.Var{v(name, "x")}); err != nil {
+			t.Errorf("GitHubOutput %s: got %v, want the output name accepted", name, err)
+		}
+	}
+}
+
+func TestGitHubEnvRejectsCaseInsensitiveDuplicates(t *testing.T) {
+	out, err := GitHubEnv([]secrets.Var{v("TOKEN", "first"), v("token", "second")})
+	if err == nil || !strings.Contains(err.Error(), "case-insensitive") {
+		t.Fatalf("got output %q, error %v; want a case-insensitive duplicate refusal", out, err)
+	}
+	if out != "" {
+		t.Errorf("validation failure returned partial output %q", out)
+	}
+}
+
+func TestGitHubOutputHeredoc(t *testing.T) {
+	out, err := GitHubOutput([]secrets.Var{v("RESULT", "a\nb")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "RESULT<<DELINEA_EOF\na\nb\nDELINEA_EOF\n"
+	if out != want {
+		t.Errorf("got %q, want %q", out, want)
+	}
+}
+
+func TestGitHubOutputRejectsCaseInsensitiveDuplicates(t *testing.T) {
+	out, err := GitHubOutput([]secrets.Var{v("TOKEN", "first"), v("token", "second")})
+	if err == nil || !strings.Contains(err.Error(), "case-insensitive") {
+		t.Fatalf("got output %q, error %v; want a case-insensitive duplicate refusal", out, err)
+	}
+	if out != "" {
+		t.Errorf("validation failure returned partial output %q", out)
+	}
+}
+
 func TestGitHubMask(t *testing.T) {
 	// A bare CR is a line break, not payload: "100%\rinside" is two content
 	// lines, both masked, and a trailing "last\r" masks "last" — so a later
@@ -184,9 +226,20 @@ func TestAzurePipelinesReservedPrefixes(t *testing.T) {
 	}
 }
 
+func TestAzurePipelinesRejectsCaseInsensitiveDuplicates(t *testing.T) {
+	out, err := AzurePipelines([]secrets.Var{v("TOKEN", "first"), v("token", "second")})
+	if err == nil || !strings.Contains(err.Error(), "case-insensitive") {
+		t.Fatalf("got output %q, error %v; want a case-insensitive duplicate refusal", out, err)
+	}
+	if out != "" {
+		t.Errorf("validation failure returned partial output %q", out)
+	}
+}
+
 func TestAllFormattersShareNameRules(t *testing.T) {
 	formatters := map[string]func([]secrets.Var) (string, error){
-		"Shell": Shell, "GitHubEnv": GitHubEnv, "GitHubMask": GitHubMask, "AzurePipelines": AzurePipelines,
+		"Shell": Shell, "GitHubEnv": GitHubEnv, "GitHubOutput": GitHubOutput,
+		"GitHubMask": GitHubMask, "AzurePipelines": AzurePipelines,
 	}
 	for name, f := range formatters {
 		if _, err := f([]secrets.Var{v("1BAD", "x")}); err == nil || !strings.Contains(err.Error(), "not a valid variable name") {
