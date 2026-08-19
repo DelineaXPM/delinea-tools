@@ -14,10 +14,10 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/DelineaXPM/delinea-tools/api"
+	"github.com/DelineaXPM/delinea-common/api"
+	ds "github.com/DelineaXPM/delinea-common/secrets"
+	"github.com/DelineaXPM/delinea-common/secrets/ciout"
 	"github.com/DelineaXPM/delinea-tools/internal/cli"
-	ds "github.com/DelineaXPM/delinea-tools/secrets"
-	"github.com/DelineaXPM/delinea-tools/secrets/ciout"
 )
 
 // UsageText returns the secrets-group usage with the command synopsis,

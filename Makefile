@@ -31,10 +31,10 @@ cover:
 	go test -covermode=count -coverprofile=coverage.out ./...
 	go tool cover -func=coverage.out | tail -1
 
-## coverage-check: enforce the same 88% offline coverage floor as CI
+## coverage-check: enforce the same 85% command-only coverage floor as CI
 coverage-check:
 	go test -covermode=atomic -coverprofile=coverage.out ./...
-	go tool cover -func=coverage.out | awk '/^total:/ { seen=1; gsub(/%/, "", $$3); print "total coverage: " $$3 "%"; if ($$3 + 0 < 88.0) exit 1 } END { if (!seen) { print "coverage gate: no total: line from go tool cover"; exit 1 } }'
+	go tool cover -func=coverage.out | awk '/^total:/ { seen=1; gsub(/%/, "", $$3); print "total coverage: " $$3 "%"; if ($$3 + 0 < 85.0) exit 1 } END { if (!seen) { print "coverage gate: no total: line from go tool cover"; exit 1 } }'
 
 ## install: install the CLI to $GOBIN (or $GOPATH/bin)
 install:

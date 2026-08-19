@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/DelineaXPM/delinea-tools/api"
-	ds "github.com/DelineaXPM/delinea-tools/secrets"
+	"github.com/DelineaXPM/delinea-common/api"
+	ds "github.com/DelineaXPM/delinea-common/secrets"
 )
 
 // everyFinding gathers findings from every producer in check, with adversarial

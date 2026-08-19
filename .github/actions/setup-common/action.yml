@@ -1,0 +1,40 @@
+name: Set up private delinea-common access
+description: Configure read-only Git and Go access to the private common module.
+
+inputs:
+  deploy-key:
+    description: Read-only deploy key registered on DelineaXPM/delinea-common.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        DELINEA_COMMON_DEPLOY_KEY: ${{ inputs.deploy-key }}
+      run: |
+        set -eu
+        test -n "$DELINEA_COMMON_DEPLOY_KEY" || {
+          echo 'DELINEA_COMMON_DEPLOY_KEY is required while delinea-common is private' >&2
+          exit 1
+        }
+        runner_temp="$RUNNER_TEMP"
+        if command -v cygpath >/dev/null 2>&1; then
+          runner_temp=$(cygpath -u "$runner_temp")
+        fi
+        key_file="$runner_temp/delinea-common-deploy-key"
+        known_hosts="$runner_temp/delinea-common-known-hosts"
+        umask 077
+        printf '%s\n' "$DELINEA_COMMON_DEPLOY_KEY" > "$key_file"
+        # GitHub's published Ed25519 host key, also returned by GET /meta.
+        printf '%s\n' 'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' > "$known_hosts"
+        git config --global url."git@github.com:DelineaXPM/delinea-common".insteadOf \
+          "https://github.com/DelineaXPM/delinea-common"
+        printf -v ssh_command 'ssh -i "%s" -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="%s"' \
+          "$key_file" "$known_hosts"
+        git config --global core.sshCommand "$ssh_command"
+        {
+          echo 'GOPRIVATE=github.com/DelineaXPM/*'
+          echo 'GONOSUMDB=github.com/DelineaXPM/*'
+          echo 'GIT_TERMINAL_PROMPT=0'
+        } >> "$GITHUB_ENV"

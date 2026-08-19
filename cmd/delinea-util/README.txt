@@ -16,17 +16,17 @@ engine, and one set of connection settings:
     credential — with read-only diagnostic requests and without exposing a
     secret value.
 
-Nothing is written to disk unless you ask for it. The tool ships as an
-importable Go module (the api and secrets packages, no dependencies outside the
-standard library) and as this CLI that wraps them.
+Nothing is written to disk unless you ask for it. The reusable api and secrets
+packages live in github.com/DelineaXPM/delinea-common; this repository ships the
+CLI that wraps them.
 
 AT A GLANCE
 -----------
 
   - One credential model reaches Secret Server (on-prem or cloud) and the
     Delinea Platform — no separate tools or code paths.
-  - A single self-contained binary (standard library only, no runtime service
-    dependency), also importable as the api and secrets Go libraries.
+  - A single self-contained binary with no runtime service dependency. Its sole
+    Go module dependency is the standard-library-only delinea-common module.
   - The vault credential comes from the environment or stdin, never argv; tokens
     are cached in memory, and nothing is written to disk unless you ask.
   - The raw REST surface stays stable as services change — no per-service
@@ -280,7 +280,7 @@ The grant credentials stay exported for the whole run — something must be
 able to re-grant — so the spend-then-unset hygiene applies at script exit.
 The PowerShell version of this loop is at the end of EXAMPLES.
 
-Go programs embedding the package (github.com/DelineaXPM/delinea-tools/api)
+Go programs embedding the package (github.com/DelineaXPM/delinea-common/api)
 share tokens automatically: clients built without Config.Cache use one
 process-wide in-memory cache, reusing a successful grant across clients until
 the token approaches expiry, with nothing on disk. Clients with equivalent
@@ -1057,18 +1057,18 @@ Credential on stdin:
 LIBRARY USAGE
 -------------
 
-The module ships two importable packages with no dependencies outside the Go
-standard library:
+The command's implementation packages are provided by the dependency-free
+github.com/DelineaXPM/delinea-common module:
 
-  - github.com/DelineaXPM/delinea-tools/api — the authentication and transport
+  - github.com/DelineaXPM/delinea-common/api — the authentication and transport
     engine (api.New, api.Config, the token cache); build an *api.Client and call
     Do, Token, or the vault-broker helpers directly.
-  - github.com/DelineaXPM/delinea-tools/secrets — the resolve engine over the
+  - github.com/DelineaXPM/delinea-common/secrets — the resolve engine over the
     api client.
 
   import (
-      "github.com/DelineaXPM/delinea-tools/api"
-      ds "github.com/DelineaXPM/delinea-tools/secrets"
+      "github.com/DelineaXPM/delinea-common/api"
+      ds "github.com/DelineaXPM/delinea-common/secrets"
   )
 
   client, err := ds.New(ds.Config{
@@ -1102,7 +1102,7 @@ and secret resolution, build an api.Client and wrap it: sc := ds.NewWithClient(c
 Config.Header carries same-origin gateway headers through probes, grants and API
 calls; its values are redacted from formatted Config output. Config.CACert /
 Config.SkipTLSVerify configure TLS, and apply to this client's transport only.
-See "go doc github.com/DelineaXPM/delinea-tools/secrets".
+See "go doc github.com/DelineaXPM/delinea-common/secrets".
 
 Long-running services set Config.Logger (a *log/slog.Logger; nil is silent)
 to see token grant outcomes, request retries, vault selection, and discarded

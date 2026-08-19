@@ -7,8 +7,8 @@ name: consumer-example
 #
 # This file dogfoods the CLI from source (go run ./cmd/delinea-util). An external
 # consumer would instead run, with no checkout:
-#     go run github.com/DelineaXPM/delinea-tools/cmd/delinea-util@v1.1.4 ...
-#   or `go install github.com/DelineaXPM/delinea-tools/cmd/delinea-util@v1.1.4`
+#     go run github.com/DelineaXPM/delinea-tools/cmd/delinea-util@v1.0.0 ...
+#   or `go install github.com/DelineaXPM/delinea-tools/cmd/delinea-util@v1.0.0`
 #   once and call `delinea-util` from PATH.
 #
 # The Delinea Platform is identical with DELINEA_TOOLS_CLIENT_ID and
@@ -28,6 +28,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup-common
+        with:
+          deploy-key: ${{ secrets.DELINEA_COMMON_DEPLOY_KEY }}
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
@@ -52,6 +55,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup-common
+        with:
+          deploy-key: ${{ secrets.DELINEA_COMMON_DEPLOY_KEY }}
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod

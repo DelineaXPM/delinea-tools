@@ -19,8 +19,8 @@ import (
 	"github.com/DelineaXPM/delinea-tools/cmd/delinea-util/secretscmd"
 	"github.com/DelineaXPM/delinea-tools/internal/cli"
 
-	da "github.com/DelineaXPM/delinea-tools/api"
-	ds "github.com/DelineaXPM/delinea-tools/secrets"
+	da "github.com/DelineaXPM/delinea-common/api"
+	ds "github.com/DelineaXPM/delinea-common/secrets"
 )
 
 func main() {

@@ -26,8 +26,8 @@ GITHUB ACTIONS
 
 Get the tool with go run (no install) or install it once onto PATH:
 
-    go run github.com/DelineaXPM/delinea-tools/cmd/delinea-util@v1.1.4 ...
-    # or: go install github.com/DelineaXPM/delinea-tools/cmd/delinea-util@v1.1.4
+    go run github.com/DelineaXPM/delinea-tools/cmd/delinea-util@v1.0.0 ...
+    # or: go install github.com/DelineaXPM/delinea-tools/cmd/delinea-util@v1.0.0
 
 Pin a reviewed release in CI rather than using @latest, so a future tool update
 cannot enter a secret-bearing pipeline without the repository reviewing it.

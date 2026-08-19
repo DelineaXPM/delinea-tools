@@ -1,241 +1,141 @@
-delinea-tools — FEATURES
+delinea-tools - FEATURES
 ========================
 
-One Go module for authenticating to Delinea Secret Server (on-prem and cloud)
-and the Delinea Platform and fetching secrets. It ships as a command-line tool
-(delinea-util) and as two embeddable libraries (the api and secrets packages).
-It imports only the Go standard library.
+This repository ships the delinea-util command. Its authentication, transport,
+secret-resolution, and CI-formatting implementation comes from the sole module
+dependency, github.com/DelineaXPM/delinea-common.
 
 
 TARGETS AND AUTHENTICATION
 --------------------------
 
-  - One credential model for both products: Secret Server (username/password,
-    optional AD domain) and the Delinea Platform (OAuth client_id/client_secret).
-  - Target inference: the grant style is chosen from which credential pair is
-    set, or named explicitly with --target ss|platform.
-  - Probe-driven target selection: Config.WithProbedTarget resolves an unset
-    target with one Delinea-credential-free health probe (retaining configured
-    same-origin gateway headers), for the single-credential-pair
-    integration shape. Only an authoritative healthy JSON boolean or the exact
-    legacy text Healthy selects a backend.
-  - Pre-obtained bearer tokens are accepted directly, skipping the grant.
-  - Interactive MFA login (delinea-util token --interactive): walks the Platform
-    Identity API (password plus whatever second factor the account offers -- an
-    out-of-band challenge such as an emailed link or code, SMS, or push, or an
-    authenticator/OTP code) for MFA-gated accounts that cannot use the password
-    grant. Redirect-based federated/SSO login is refused, not partially
-    supported.
-  - Secret Server Cloud tenant URLs are built from tenant+TLD by api.CloudURL.
+  - Secret Server and Secret Server Cloud password grants, with optional AD
+    domain.
+  - Delinea Platform client-credentials grants.
+  - A pre-obtained bearer token can skip the grant.
+  - Interactive Platform login supports native-account MFA challenges.
+    Federated/SSO redirects are refused.
+  - The target can be explicit (--target ss|platform) or inferred from the
+    configured credential pair. check can probe an unset target without sending
+    a Delinea credential.
+  - Passwords, client secrets, bearer tokens, and interactive answers are never
+    accepted as command-line values. Use environment variables or
+    --secret-stdin.
 
 
-THE CLI (delinea-util)
+RAW REST
+--------
+
+  - "delinea-util METHOD PATH" performs one authenticated request and streams
+    its response body to stdout.
+  - GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS, token, and check are supported.
+  - -d accepts a literal body, @FILE, or @- for stdin. -H accepts ordinary
+    headers or @FILE; gateway headers are file-only.
+  - -i includes response status and headers. -v writes a credential-redacted
+    request/response summary to stderr.
+  - --vault routes through Platform vault discovery; --vault-id selects a
+    specific broker entry. Alternate vault ports require an explicit
+    host:port allowlist entry.
+  - Safe reads may retry transient transport/status failures. Writes are never
+    retried or redirected.
+
+
+SECRET DELIVERY
+---------------
+
+  - "secrets run" injects resolved values into one child. On Unix it normally
+    exec-replaces itself; on Windows, and when a Unix stdin payload must be
+    streamed, it supervises the child and propagates its exit code.
+  - "secrets print" writes a selected format to stdout or an explicit --out
+    destination.
+  - "secrets template" renders a Go text/template after all mappings resolve.
+  - Mappings use NAME=field#id or NAME=field@\folder\path. PREFIX_*=#id expands
+    non-file fields with usable slugs.
+  - File fields are downloaded and substituted transparently, subject to count
+    and total-byte limits.
+  - Delivery validates the entire mapping set before publishing anything and
+    refuses variable collisions.
+  - Modes include env, stdin, sh, json, raw, github-env, github-output, and ado.
+  - GitHub and Azure modes validate platform-reserved names and register masks
+    before publishing a value. Azure secret variables are single-line only.
+
+
+DIAGNOSTICS
+-----------
+
+  - check reports configuration, reachability, credential validity, and every
+    requested mapping without printing a secret value.
+  - --no-auth performs configuration and reachability checks without a grant.
+  - --json and --quiet provide automation-friendly output.
+  - --readme, --tree, --version, and command-specific help are embedded in the
+    binary.
+
+
+OUTPUT AND EXIT CODES
 ---------------------
 
-  - Curl-style raw REST access: "delinea-util METHOD PATH" performs one
-    authenticated call against any Secret Server or Platform endpoint and streams
-    the response body to stdout.
-  - Verbs: METHOD PATH, token (--interactive for MFA login), check, and the
-    secrets subcommand group (run, print, template).
-  - Request options: -d BODY (or @file, @-), -H headers (-H @FILE keeps secret
-    header values out of argv), -i/--include (status and headers), and
-    -v/--verbose (request/response summary on stderr).
-  - Same-origin gateways: --gateway-header-file / DELINEA_TOOLS_GATEWAY_HEADER_FILE
-    supplies headers to probes, grants, Identity requests, and primary-origin API
-    calls. Values stay out of argv and are never forwarded to a cross-origin vault.
-  - Platform vault routing: --vault discovers the default vault through the
-    broker and sends the request there; --vault-id targets a specific vault.
-    Discovered routes refresh after five minutes and are revalidated before use.
-  - Self-documenting: help, --readme, --tree, --version.
-  - Predictable exit codes for raw requests and the secrets group's own work:
+  - Secret-bearing stdout refuses a terminal unless explicitly armed.
+  - Regular --out files are atomically replaced at mode 0600 on Unix; symlinks
+    are refused. Explicit special sinks and runner-owned append files retain
+    their existing mode.
+  - Raw calls and secret-delivery setup use:
+
         0  success
         1  usage or configuration error
-        2  authentication or vault discovery failed
-        3  transport error (DNS, TLS, timeout)
-        4  the HTTP call completed with a non-2xx status
-    After a successful launch, secrets run instead returns the child's exit code.
-    check instead exits 0 when every probe is clean and 1 when it reports any
-    finding; probe failures do not escape as codes 2-4.
+        2  authentication or vault discovery failure
+        3  transport, TLS, DNS, or timeout failure
+        4  completed non-2xx HTTP response
 
-
-SECRET RETRIEVAL AND DELIVERY (secrets group)
----------------------------------------------
-
-  - run:      fetch secrets and exec a command with them injected. On Unix the
-              CLI exec-replaces itself with the child, so nothing of it lingers
-              (a stdin payload too large to prebuffer ahead of exec — over
-              ~60KB — is streamed by a supervising parent instead); on Windows
-              it supervises the child and propagates its exit code.
-  - print:    fetch and write to stdout, or to --out FILE (new/replaced regular
-              files use mode 0600 and are written only on success; existing
-              special sinks and GitHub append files retain their mode).
-  - template: render a Go text/template file with secret values substituted.
-  - Mapping syntax: NAME=field#id or NAME=field@\folder\path; PREFIX_*=#id
-    expands every non-file field with a slug into PREFIX_<SLUG> variables.
-  - Delivery modes (--via): env, stdin, and sh for run; stdin, sh, json, raw,
-    github-env, github-output, and ado for print.
-  - File-field (attachment) content is downloaded and substituted transparently;
-    per-secret fan-out is capped by count and total bytes.
-  - Collision safety: two mappings that would define the same variable are
-    refused before delivery.
-
-
-DIAGNOSTICS (check)
--------------------
-
-  - Whole-tool diagnosis: reports what is configured, reachable, and resolvable
-    with read-only requests that never expose a secret value.
-  - Validates the credential by authenticating against the probe-selected
-    backend; --no-auth runs configuration and reachability only (no grant, so no
-    lockout risk).
-  - Resolves each mapping (names and value lengths only) so a pipeline can verify
-    its references before trusting them.
-  - --json and --quiet output modes for automation.
-
-
-THE GO LIBRARIES
-----------------
-
-  - api: the raw authenticated client. Config + Client with Do(ctx, Request)
-    reaches any endpoint; handles the grant, token lifecycle, TLS, vault routing,
-    and redaction. Also DoBufferedResponse, Authenticate, VaultURL, CloudURL,
-    NormalizeURL, ProbeBackend, and a TokenCache interface with NewMemoryCache.
-  - secrets: resolves field references into ordered name/value pairs over an api
-    client. Resolve, Verify (names and lengths, never values), Secret,
-    SecretByPath; a Fetcher interface and NewWithClient/NewWithFetcher seams.
-  - secrets/secretstest: a map-backed Fetcher stub for consumer tests, encoding
-    the real server's semantics (missing and denied both return ErrAccessDenied).
-  - secrets/ciout: CI output formatters — Shell (export lines), GitHubEnv
-    ($GITHUB_ENV heredocs with its reserved-name rules), GitHubOutput
-    ($GITHUB_OUTPUT heredocs), GitHubMask (::add-mask:: per line), and
-    AzurePipelines (task.setsecret plus secret task.setvariable commands).
-  - secrets/retrievejson: one strict parser for the shared CI retrieve-secrets
-    JSON schema ([{secretId|secretPath, secretKey, outputVariable}]).
-  - Sentinel errors matched with errors.Is: ErrConfig, ErrAuth, ErrAccessDenied,
-    ErrVault, ErrTransport, ErrTimeout (api); ErrNotFound, ErrAccessDenied,
-    ErrTransport, ErrTimeout (secrets).
+  - After launch, secrets run returns the child exit code. check returns 0 for
+    a clean report and 1 for any finding.
 
 
 SECURITY PROPERTIES
 -------------------
 
-  - Delinea authentication secrets are never command-line arguments, tool-wide.
-    Passwords, client secrets, and bearer tokens come only from the environment
-    or stdin — argv is world-readable and leaks into shell history and CI logs.
-    Sensitive request bodies and headers use @FILE/stdin forms; gateway headers
-    are file-only.
-  - Credential redaction is unconditional: every accepted bearer token,
-    password, client secret, and interactive-login answer is redacted from
-    diagnostics regardless of length. A short credential may also redact a
-    matching ordinary word; confidentiality takes precedence over preserving
-    that diagnostic text.
-  - Config never formats a credential: the fmt verbs and json.Marshal render
-    Password/ClientSecret/Token and header values as [REDACTED] (empty stays
-    empty), and a URL's userinfo/query/fragment are hidden — even when a struct
-    embeds a Config.
-  - Nothing is written to disk unless asked; --out creates or replaces regular
-    files at mode 0600 and only on success, with symlinks refused. Explicit
-    existing special sinks and GitHub append files retain their mode.
-  - TLS trust is per-client: CACert and SkipTLSVerify never mutate
-    http.DefaultTransport, so other HTTPS in the process is unaffected; TLS-trust
-    settings scope the token cache; grants follow no redirects, cross-origin API
-    redirects are refused, and mutating API requests follow no redirects.
-    The standard transport is snapshotted at package initialization; later
-    in-place changes must be supplied as Config.Transport and are treated as
-    opaque, with token caching disabled.
-  - Vault-broker URLs are treated as untrusted input: HTTPS only, no userinfo,
-    host must be same-origin, on the Delinea cloud-domain allowlist, or
-    explicitly permitted. Automatic cloud trust and hostname-only allowlist
-    entries cover port 443 only; another port requires an exact host:port entry.
-  - Log output (Config.Logger) carries metadata and, for a failed token grant,
-    may include a bounded, sanitized, credential-redacted error-body snippet.
-    Error diagnostics may likewise include bounded, sanitized, redacted snippets
-    from failed endpoints. Neither includes a request body, a successful response
-    body, a credential, or a URL query string.
+  - Authentication credentials never appear on argv.
+  - Configured credentials and sensitive headers are redacted from errors,
+    formatted configuration, and operational logging.
+  - A secrets run child receives a declared environment; unrelated ambient
+    variables are not inherited.
+  - TLS trust changes are scoped to this client. Grants and writes never follow
+    redirects, and cross-origin API redirects are refused.
+  - Platform vault-broker URLs are untrusted input and are validated before use.
+  - No token or credential is persisted. Disk output occurs only when requested.
 
 
-CI/CD INTEGRATION
------------------
+CI/CD
+-----
 
-  - GitHub Actions: "secrets print --via github-env --out $GITHUB_ENV" writes the
-    variables and emits ::add-mask:: for every secret line to stdout first, so
-    the runner masks the values before anything can echo them. Values must be
-    valid UTF-8 Unix text: NUL and carriage returns are refused. GITHUB_*,
-    RUNNER_*, and NODE_OPTIONS names are refused for environment delivery;
-    "--via github-output --out $GITHUB_OUTPUT" provides the distinct step-output
-    namespace. Both modes reject names differing only by case, keeping output
-    deterministic across runner operating systems.
-  - Azure Pipelines: "secrets print --via ado" writes mask-before-publication
-    task.setsecret/task.setvariable commands to stdout for later steps in the
-    same job. Values are secret pipeline variables and are not ambient script
-    environment variables. Multiline values are refused because Azure's safe
-    default agent configuration rejects multiline secret variables. Names may
-    not begin with Azure's endpoint, input, secret, path, or securefile prefixes,
-    and names differing only by case are refused because the agent treats them
-    as one variable.
-  - GitLab CI: fetch secrets in the consuming job with "secrets run" or "--via sh"
-    into eval. (There is deliberately no artifact-based delivery: a GitLab dotenv
-    report is uploaded to the server and readable by pipeline users.)
-  - Shared, tested output and parsing layers (ciout, retrievejson) so an
-    integration is a thin wrapper, not a hand-rolled copy where quoting bugs
-    become security bugs.
-  - Worked recipes and a runnable example: docs/CI.txt (GitHub Actions, Azure
-    Pipelines, GitLab, and scoped vs cross-step delivery) and the GitHub
-    consumer-example workflow, which exercises both GitHub delivery shapes
-    against a test tenant.
-
-
-TOKEN LIFECYCLE AND PERFORMANCE
--------------------------------
-
-  - A password/client-secret grant is expensive (an extra round-trip plus the
-    server's deliberately slow password hash); presenting a token is cheap. The
-    tool grants once and reuses the token.
-  - Per-client memoization: one client reuses its own token across every call it
-    makes, including a paged command walking many pages on one grant.
-  - Process-wide default cache: clients built without a Cache share one in-memory
-    cache, so a service constructing a client per operation still grants once per
-    identity. Keyed by URL, target, identity, and a credential digest (folding in
-    headers and TLS trust); memory-only, never persisted.
-  - Cross-client grant coalescing: clients sharing a cache coalesce concurrent
-    grants per credential, so a burst of parallel first-time calls costs one
-    grant — and one failed attempt — rather than one per caller racing the
-    account toward lockout.
-  - A 401 on a cached token evicts it and replays GET/HEAD on a fresh grant.
-    Secret Server's exact expired-token 403 does the same; every other 403 is
-    resource authorization and remains untouched. Mutating requests are never
-    replayed, but an authoritative stale-token response evicts their token so
-    the next call can grant afresh.
-  - The one-shot CLI opts out of the shared cache (it never reads it); a
-    long-lived embedding service keeps it (the default).
+  - Scoped injection with secrets run is preferred when the consumer can be
+    wrapped.
+  - GitHub Actions environment and step-output command files use validated
+    names, collision-safe delimiters, and mask-before-write ordering.
+  - Azure Pipelines logging commands escape protocol metacharacters and mark
+    variables secret before publication. They are available to later steps in
+    the same job and require explicit environment mapping for scripts.
+  - Shell export output supports same-step GitLab and local shell use without
+    artifact transport.
+  - docs/CI.txt contains complete recipes and platform caveats.
 
 
 PORTABILITY AND DEPENDENCIES
 ----------------------------
 
-  - Zero third-party dependencies — the Go standard library only. Enforced, not
-    just asserted: an offline test (internal/supplychain) fails the build if
-    go.mod ever gains a require directive, and CI additionally checks that
-    go.mod is tidy and that no go.sum exists.
-  - Because there are no module dependencies, the Go toolchain is the module's
-    entire third-party build and runtime dependency surface. CI runs a
-    version-pinned govulncheck on pull requests and pushes to main, and the go
-    directive in go.mod — the minimum toolchain consumers build against — is
-    advanced when an upstream Go security release fixes a vulnerability that
-    affects this module. See SECURITY.md.
-  - Runs on Linux, macOS, and Windows; the per-OS execution model (Unix
-    exec-replace vs Windows supervision, PowerShell vs POSIX syntax, stdin
-    re-encoding) is documented where it matters.
+  - Linux, macOS, and Windows are built and tested.
+  - The command has exactly one direct Go module dependency:
+    github.com/DelineaXPM/delinea-common v1.0.0. That module uses only the Go
+    standard library.
+  - An offline supply-chain test rejects any additional, indirect, replacement,
+    exclusion, or retraction directive.
 
 
 TESTING
 -------
 
-  - The default suite is fully offline (no credentials, no network).
-  - A live end-to-end suite (build tag e2e) runs against real tenants, with a
-    strict mode (DELINEA_TOOLS_TEST_REQUIRE_E2E) that fails rather than skips when a
-    fixture is missing; its fixtures and coverage are documented in
-    docs/E2E.txt.
-  - CI runs the race suite on Linux, macOS, and Windows, an 88% coverage floor,
-    and a scheduled quality workflow (ten shuffled passes, fuzz sessions for
-    every fuzz target).
+  - The default suite is offline and deterministic.
+  - CI runs race tests on Linux, macOS, and Windows, coverage enforcement, vet,
+    cross-builds, dependency checks, and vulnerability scanning.
+  - Scheduled quality runs repeat the shuffled suite and fuzz every CLI target.
+  - Live E2E tests execute the built command against both supported product
+    paths. Strict mode fails when any documented fixture is absent.

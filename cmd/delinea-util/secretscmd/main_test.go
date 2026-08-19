@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
+	ds "github.com/DelineaXPM/delinea-common/secrets"
 	"github.com/DelineaXPM/delinea-tools/internal/cli"
-	ds "github.com/DelineaXPM/delinea-tools/secrets"
 )
 
 // unifiedREADME loads the single authoritative README that package main embeds

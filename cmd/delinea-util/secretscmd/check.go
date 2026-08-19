@@ -13,9 +13,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/DelineaXPM/delinea-tools/api"
+	"github.com/DelineaXPM/delinea-common/api"
+	ds "github.com/DelineaXPM/delinea-common/secrets"
 	"github.com/DelineaXPM/delinea-tools/internal/cli"
-	ds "github.com/DelineaXPM/delinea-tools/secrets"
 )
 
 type status int

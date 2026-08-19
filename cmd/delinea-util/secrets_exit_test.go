@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	ds "github.com/DelineaXPM/delinea-tools/secrets"
+	ds "github.com/DelineaXPM/delinea-common/secrets"
 )
 
 // End-to-end: a secrets fetch against an unreachable host must exit 3

@@ -21,9 +21,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/DelineaXPM/delinea-tools/api"
+	"github.com/DelineaXPM/delinea-common/api"
+	ds "github.com/DelineaXPM/delinea-common/secrets"
 	"github.com/DelineaXPM/delinea-tools/internal/cli"
-	ds "github.com/DelineaXPM/delinea-tools/secrets"
 )
 
 func testCAPEM(t *testing.T) []byte {

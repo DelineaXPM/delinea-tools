@@ -17,7 +17,7 @@ import (
 
 	"github.com/DelineaXPM/delinea-tools/internal/cli"
 
-	da "github.com/DelineaXPM/delinea-tools/api"
+	da "github.com/DelineaXPM/delinea-common/api"
 )
 
 // The top-level page lists the commands and only the flags that work at the top

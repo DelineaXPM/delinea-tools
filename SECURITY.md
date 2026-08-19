@@ -9,19 +9,19 @@ your usual Delinea support channel.
 
 ## Supply chain
 
-delinea-tools is a single, self-contained Go module with **zero third-party
-dependencies** — it imports only the Go standard library. This is enforced, not
-merely asserted:
+delinea-tools has exactly one direct Go module dependency:
+[`github.com/DelineaXPM/delinea-common`](https://github.com/DelineaXPM/delinea-common).
+That module imports only the Go standard library. This boundary is enforced,
+not merely asserted:
 
-- An offline test (`internal/supplychain`) fails the build if `go.mod` ever
-  gains a `require` directive. It runs in the ordinary test suite, so it fires
-  in `make test`, in the cross-platform CI `test` job, and under the `e2e`
-  build tag.
-- CI additionally verifies that `go.mod` is tidy and that no `go.sum` exists.
+- An offline test (`internal/supplychain`) requires exactly the reviewed
+  `delinea-common v1.0.0` dependency and rejects additional, indirect,
+  replacement, exclusion, or retraction directives.
+- CI verifies that `go.mod` and `go.sum` are tidy and that the resolved module
+  graph contains only delinea-tools and delinea-common.
 
-Because there are no module dependencies, the Go toolchain and standard library
-are the module's entire third-party build and runtime dependency surface. CI
-runs a version-pinned
+The Go toolchain, standard library, and the pinned common module are the entire
+build and runtime dependency surface. CI runs a version-pinned
 [`govulncheck`](https://go.dev/doc/security/vuln/) on every pull request and
 push to `main` (`.github/workflows/ci.yml`), scanning with the minimum Go
 version in `go.mod`. A reachable standard-library vulnerability therefore
