@@ -183,6 +183,23 @@ func TestRejectsInvalidHeadersAsConfiguration(t *testing.T) {
 	}
 }
 
+func TestValidateHeadersDoesNotExposeValues(t *testing.T) {
+	if err := ValidateHeaders(http.Header{"X-Gateway": {"valid-value"}}); err != nil {
+		t.Fatalf("valid header rejected: %v", err)
+	}
+	const secret = "do-not-repeat-header-secret"
+	for _, header := range []http.Header{
+		{"Bad Name": {secret}},
+		{"X-Gateway": {secret + "\n"}},
+		{"Host": {secret + " invalid"}},
+	} {
+		err := ValidateHeaders(header)
+		if err == nil || strings.Contains(err.Error(), secret) {
+			t.Errorf("ValidateHeaders error = %v, want a refusal without the value", err)
+		}
+	}
+}
+
 func TestNewSnapshotsMutableConfig(t *testing.T) {
 	ft := &fakeTransport{}
 	header := http.Header{"X-Gateway": {"original"}}

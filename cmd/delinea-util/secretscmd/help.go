@@ -67,12 +67,12 @@ var subFlags = map[string][]cli.Flag{
 	},
 	"print": {
 		{Long: "via", Arg: "MODE", Desc: "output format: stdin (default), sh, json, raw (one unnamed value), github-env, github-output, or ado"},
-		{Long: "out", Arg: "FILE", Desc: "write to FILE at mode 0600 instead of stdout (GitHub modes append; ado is stdout-only; other modes replace on success)"},
+		{Long: "out", Arg: "FILE", Desc: "write to FILE instead of stdout (new/replaced regular files use mode 0600; existing special sinks and GitHub append files keep their mode; ado is stdout-only)"},
 		{Long: "allow-terminal", Desc: "permit writing secrets to a terminal (refused by default)"},
 	},
 	"template": {
 		{Long: "in", Arg: "FILE", Desc: "(required) the Go text/template to render"},
-		{Long: "out", Arg: "FILE", Desc: "write to FILE at mode 0600 instead of stdout, only on success"},
+		{Long: "out", Arg: "FILE", Desc: "write to FILE only on success (new/replaced regular files use mode 0600; existing special sinks keep their mode)"},
 		{Long: "allow-terminal", Desc: "permit writing secrets to a terminal (refused by default)"},
 	},
 }
@@ -117,14 +117,15 @@ func checkHelp(readme string) string {
 		"supplied -- whether it is valid for the target. It runs nothing, writes\n" +
 		"nowhere, and never prints a secret value; it reports every problem it finds\n" +
 		"and exits non-zero if any check failed.\n\n" +
-		"Requires: DELINEA_TOOLS_URL. A credential is optional -- validated if present,\n" +
-		"skipped with --no-auth. Optional MAPPINGs are additionally resolved, reporting\n" +
+		"Requires: DELINEA_TOOLS_URL. A Delinea credential is optional -- validated if\n" +
+		"present, skipped with --no-auth. Configured gateway headers still reach the\n" +
+		"same-origin health probe. Optional MAPPINGs are additionally resolved, reporting\n" +
 		"each variable and its value's length (never the value)."
 	usage := []string{"delinea-util check [flags] [MAPPING...]"}
 	flags := []cli.Flag{
 		{Long: "json", Desc: "emit the findings as JSON, with a summary count per status"},
 		{Long: "quiet", Desc: "report only warnings and failures; a clean run prints nothing"},
-		{Long: "no-auth", Desc: "skip the credential entirely: configuration and reachability only"},
+		{Long: "no-auth", Desc: "skip the Delinea credential: configuration and reachability only"},
 		{Long: "pass-env", Arg: "NAME", Desc: "include this variable when reporting the run child environment; repeatable"},
 	}
 	return cli.CommandHelp("check", long, usage, flags, cli.GlobalFlags(), mappingExtra(readme))

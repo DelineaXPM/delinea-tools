@@ -30,15 +30,15 @@ func UsageText(readme string) string {
 	return groupHelp(readme)
 }
 
-// writeSecretFile writes secret output to path at mode 0600. Callers invoke it
-// only after a successful fetch/render, and the write itself installs the new
-// contents by renaming a completed temp file over the target, so no failure at
-// any point truncates or destroys what was there. An existing regular file is
-// replaced rather than rewritten in place, so the secret cannot inherit the
-// old file's wider permissions; a symlink is refused rather than followed,
-// since it may point somewhere the author of the path did not intend. Anything
-// else (a FIFO, /dev/null) is written as-is: replacing it would destroy
-// something the caller set up deliberately.
+// writeSecretFile writes secret output to path. New and replaced regular files
+// use mode 0600. Callers invoke it only after a successful fetch/render, and the
+// write itself installs the new contents by renaming a completed temp file over
+// the target, so no failure at any point truncates or destroys what was there.
+// An existing regular file is replaced rather than rewritten in place, so the
+// secret cannot inherit the old file's wider permissions; a symlink is refused
+// rather than followed, since it may point somewhere the author of the path did
+// not intend. Anything else (a FIFO, /dev/null) is written as-is: replacing it
+// would destroy something the caller set up deliberately.
 func writeSecretFile(path string, data []byte) error {
 	fi, err := os.Lstat(path)
 	switch {
@@ -462,6 +462,13 @@ func extractConnFlags(args []string, cc *cliConfig) ([]string, error) {
 			cc.VaultAllow, i = append(cc.VaultAllow, args[i+1]), i+2
 		case hasInline && name == "--vault-allow":
 			cc.VaultAllow, i = append(cc.VaultAllow, inline), i+1
+		case a == "--gateway-header-file":
+			if i+1 >= len(args) {
+				return nil, &cli.UsageError{Msg: "--gateway-header-file needs a value"}
+			}
+			cc.GatewayHeaderFiles, i = append(cc.GatewayHeaderFiles, args[i+1]), i+2
+		case hasInline && name == "--gateway-header-file":
+			cc.GatewayHeaderFiles, i = append(cc.GatewayHeaderFiles, inline), i+1
 		case hasInline && stringFlag[name] != nil:
 			*stringFlag[name], i = inline, i+1
 		case stringFlag[a] != nil:
@@ -516,10 +523,15 @@ func buildConfig(cc cliConfig, stdin io.Reader) (ds.Config, error) {
 	if err != nil {
 		return ds.Config{}, err
 	}
+	gatewayHeader, err := cli.ReadHeaderFiles(cc.GatewayHeaderPaths())
+	if err != nil {
+		return ds.Config{}, err
+	}
 	cfg := ds.Config{
 		URL:               cc.URL,
 		Domain:            cc.Domain,
 		Token:             cc.Token,
+		Header:            gatewayHeader,
 		SkipTLSVerify:     cc.TLSSkipVerify,
 		AllowedVaultHosts: vaultHosts(cc),
 		// A one-shot CLI process never reads the shared cross-client cache —

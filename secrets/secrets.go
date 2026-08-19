@@ -60,7 +60,8 @@ type Config struct {
 	CACert            []byte // optional PEM bundle of trusted roots, added to the system trust store rather than replacing it
 	SkipTLSVerify     bool   // skip TLS certificate verification (MITM risk); scoped to this client's transport, so other connections in the process are unaffected
 	Timeout           time.Duration
-	Retries           int // attempts per fetch on transport errors, body-read failures, and 408/429/500/502/503/504 responses, honoring Retry-After; default 1 (api.Config defaults to 3 — the resolver is deliberately less aggressive per fetch)
+	Retries           int         // attempts per fetch on transport errors, body-read failures, and 408/429/500/502/503/504 responses, honoring Retry-After; default 1 (api.Config defaults to 3 — the resolver is deliberately less aggressive per fetch)
+	Header            http.Header // same-origin headers for probes, grants, Identity requests, and API calls; never forwarded to a cross-origin platform vault
 
 	Cache        api.TokenCache                  `json:"-"` // token cache shared across clients; nil means the api package's process-wide default (see api.Config.Cache)
 	DisableCache bool                            // turn off token caching for this client entirely (contradictory with an explicit Cache)
@@ -85,6 +86,17 @@ func (c Config) withRedactedCredentials() Config {
 	if c.Token != "" {
 		c.Token = "[REDACTED]"
 	}
+	if c.Header != nil {
+		c.Header = c.Header.Clone()
+		for name, values := range c.Header {
+			for i, value := range values {
+				if value != "" {
+					values[i] = "[REDACTED]"
+				}
+			}
+			c.Header[name] = values
+		}
+	}
 	// Caller implementations can contain credentials in arbitrary fields.
 	// Omit opaque extension points from all formatted representations.
 	c.Cache = nil
@@ -93,9 +105,10 @@ func (c Config) withRedactedCredentials() Config {
 	return c
 }
 
-// String renders Password and Token as "[REDACTED]" and omits opaque extension
-// points, so a Config logged through the fmt verbs — including %+v of a struct
-// that embeds one, the common consumer shape — never emits a credential.
+// String renders Password, Token, and Header values as "[REDACTED]" and omits
+// opaque extension points, so a Config logged through the fmt verbs — including
+// %+v of a struct that embeds one, the common consumer shape — never emits a
+// credential.
 func (c Config) String() string {
 	type plain Config
 	return fmt.Sprintf("%+v", plain(c.withRedactedCredentials()))
@@ -104,11 +117,11 @@ func (c Config) String() string {
 // GoString makes %#v redact exactly as String does.
 func (c Config) GoString() string { return c.String() }
 
-// MarshalJSON emits the Config with credentials replaced by "[REDACTED]" —
-// JSON encoders (structured loggers included) never see a credential, and a
-// marshaled Config cannot round-trip one onto disk by design. Decoding a
-// configuration file into Config is unaffected; Backoff, Cache, and Logger are
-// not serializable and are skipped.
+// MarshalJSON emits the Config with credentials and Header values replaced by
+// "[REDACTED]" — JSON encoders (structured loggers included) never see a
+// credential, and a marshaled Config cannot round-trip one onto disk by design.
+// Decoding a configuration file into Config is unaffected; Backoff, Cache, and
+// Logger are not serializable and are skipped.
 func (c Config) MarshalJSON() ([]byte, error) {
 	type plain Config
 	return json.Marshal(plain(c.withRedactedCredentials()))
@@ -207,6 +220,7 @@ func (c Config) EngineConfig() api.Config {
 		AllowInsecureHTTP: c.AllowInsecureHTTP,
 		Domain:            c.Domain,
 		Token:             c.Token,
+		Header:            c.Header.Clone(),
 		CACert:            c.CACert,
 		SkipTLSVerify:     c.SkipTLSVerify,
 		Timeout:           c.Timeout,
@@ -230,7 +244,8 @@ func (c Config) EngineConfig() api.Config {
 // WithProbedTarget resolves an unset Target by asking the server what it is
 // (see api.Config.WithProbedTarget): the single Username/Password pair then
 // routes to the grant the probed backend uses. An explicit Target returns
-// the Config unchanged. The probe sends no credential.
+// the Config unchanged. The probe sends no Delinea credential, but does send
+// configured same-origin gateway headers.
 func (c Config) WithProbedTarget(ctx context.Context) (Config, error) {
 	if c.Target != api.TargetAuto {
 		return c, nil

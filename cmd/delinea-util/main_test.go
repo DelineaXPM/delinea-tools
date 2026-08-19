@@ -32,10 +32,10 @@ func TestTopLevelHelp(t *testing.T) {
 		"\nFlags:\n",
 		"\nGlobal Flags:\n",
 		"(required) target base URL",
-		"Credentials (never a flag",
+		"Delinea credentials (never a flag",
 		"DELINEA_TOOLS_PASSWORD",
 		"check may run in reachability-only mode without one",
-		"check --no-auth additionally ignores any ambient credential",
+		"check --no-auth additionally ignores any ambient Delinea credential",
 		"Use \"delinea-util COMMAND --help\"",
 	} {
 		if !strings.Contains(h, want) {
@@ -54,7 +54,7 @@ func TestTopLevelHelp(t *testing.T) {
 // Credentials, and states what it requires.
 func TestPerCommandHelp(t *testing.T) {
 	req := requestHelp()
-	for _, want := range []string{"-d, --data", "-H, --header", "--vault-id", "-i, --include", "Requires: DELINEA_TOOLS_URL", "Credentials (never a flag"} {
+	for _, want := range []string{"-d, --data", "-H, --header", "@FILE reads one per line", "--vault-id", "-i, --include", "Requires: DELINEA_TOOLS_URL", "Delinea credentials (never a flag"} {
 		if !strings.Contains(req, want) {
 			t.Errorf("request help missing %q", want)
 		}
@@ -67,7 +67,7 @@ func TestPerCommandHelp(t *testing.T) {
 		"--interactive", "--allow-terminal", "Requires: DELINEA_TOOLS_URL",
 		"--interactive requires a username (--username or DELINEA_TOOLS_USERNAME)",
 		"DELINEA_TOOLS_PASSWORD from the environment", "stdin carries MFA answers",
-		"Credentials (never a flag",
+		"Delinea credentials (never a flag",
 	} {
 		if !strings.Contains(tok, want) {
 			t.Errorf("token help missing %q", want)
@@ -344,6 +344,8 @@ func TestParseArgsConfigFlags(t *testing.T) {
 		"--tls-skip-verify",
 		"--vault-allow", "a.example.com,b.example.com",
 		"--vault-allow=c.example.com",
+		"--gateway-header-file", "first.headers",
+		"--gateway-header-file=second.headers",
 		"GET", "/x",
 	}, &cc)
 	if err != nil {
@@ -354,8 +356,9 @@ func TestParseArgsConfigFlags(t *testing.T) {
 	want := cliConfig{
 		URL: "https://x.example.com", Target: "platform",
 		ClientID: "cid", Timeout: "5s",
-		TLSSkipVerify: true,
-		VaultAllow:    []string{"a.example.com,b.example.com", "c.example.com"},
+		TLSSkipVerify:      true,
+		VaultAllow:         []string{"a.example.com,b.example.com", "c.example.com"},
+		GatewayHeaderFiles: []string{"first.headers", "second.headers"},
 	}
 	if !reflect.DeepEqual(cc, want) {
 		t.Errorf("got %+v, want %+v", cc, want)
@@ -378,20 +381,32 @@ func TestFlagsOverrideEnv(t *testing.T) {
 	}
 }
 
+func TestGatewayHeaderFileFlagsReplaceEnvironmentFile(t *testing.T) {
+	t.Setenv("DELINEA_TOOLS_GATEWAY_HEADER_FILE", "ambient.headers")
+	cc := configFromEnv()
+	if _, err := parseArgs([]string{"--gateway-header-file", "first.headers", "--gateway-header-file=second.headers", "GET", "/x"}, &cc); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := cc.GatewayHeaderPaths(), []string{"first.headers", "second.headers"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("got %v, want flag files to replace the environment file %v", got, want)
+	}
+}
+
 func TestConfigFromEnvAll(t *testing.T) {
 	env := map[string]string{
-		"DELINEA_TOOLS_URL":             "https://x.example.com",
-		"DELINEA_TOOLS_TARGET":          "ss",
-		"DELINEA_TOOLS_USERNAME":        "u",
-		"DELINEA_TOOLS_PASSWORD":        "p",
-		"DELINEA_TOOLS_DOMAIN":          "d",
-		"DELINEA_TOOLS_CLIENT_ID":       "cid",
-		"DELINEA_TOOLS_CLIENT_SECRET":   "cs",
-		"DELINEA_TOOLS_TOKEN":           "tok",
-		"DELINEA_TOOLS_CA_CERT":         "/tmp/ca.pem",
-		"DELINEA_TOOLS_TIMEOUT":         "45s",
-		"DELINEA_TOOLS_TLS_SKIP_VERIFY": "yes",
-		"DELINEA_TOOLS_VAULT_ALLOW":     "a.example.com",
+		"DELINEA_TOOLS_URL":                 "https://x.example.com",
+		"DELINEA_TOOLS_TARGET":              "ss",
+		"DELINEA_TOOLS_USERNAME":            "u",
+		"DELINEA_TOOLS_PASSWORD":            "p",
+		"DELINEA_TOOLS_DOMAIN":              "d",
+		"DELINEA_TOOLS_CLIENT_ID":           "cid",
+		"DELINEA_TOOLS_CLIENT_SECRET":       "cs",
+		"DELINEA_TOOLS_TOKEN":               "tok",
+		"DELINEA_TOOLS_CA_CERT":             "/tmp/ca.pem",
+		"DELINEA_TOOLS_TIMEOUT":             "45s",
+		"DELINEA_TOOLS_TLS_SKIP_VERIFY":     "yes",
+		"DELINEA_TOOLS_VAULT_ALLOW":         "a.example.com",
+		"DELINEA_TOOLS_GATEWAY_HEADER_FILE": "/tmp/gateway.headers",
 	}
 	for k, v := range env {
 		t.Setenv(k, v)
@@ -403,7 +418,7 @@ func TestConfigFromEnvAll(t *testing.T) {
 		ClientID: "cid", ClientSecret: "cs", Token: "tok",
 		CACert: "/tmp/ca.pem", Timeout: "45s",
 		TLSSkipVerify: true,
-		VaultAllowEnv: "a.example.com",
+		VaultAllowEnv: "a.example.com", GatewayHeaderFileEnv: "/tmp/gateway.headers",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("got %+v, want %+v", got, want)
@@ -415,11 +430,15 @@ func TestBuildConfig(t *testing.T) {
 	if err := os.WriteFile(caFile, []byte("PEM"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	headerFile := filepath.Join(t.TempDir(), "gateway.headers")
+	if err := os.WriteFile(headerFile, []byte("X-Gateway-Key: gateway-secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	cc := cliConfig{
 		URL: "https://x.example.com", Target: "platform",
 		ClientID: "cid", ClientSecret: "cs",
 		CACert: caFile, Timeout: "45s",
-		VaultAllow: []string{"a.example.com, b.example.com", "c.example.com"},
+		VaultAllow: []string{"a.example.com, b.example.com", "c.example.com"}, GatewayHeaderFiles: []string{headerFile},
 	}
 	cfg, err := buildConfig(cc)
 	if err != nil {
@@ -437,6 +456,9 @@ func TestBuildConfig(t *testing.T) {
 	wantAllow := []string{"a.example.com", "b.example.com", "c.example.com"}
 	if !reflect.DeepEqual(cfg.AllowedVaultHosts, wantAllow) {
 		t.Errorf("vault allow: got %v, want %v", cfg.AllowedVaultHosts, wantAllow)
+	}
+	if got := cfg.Header.Get("X-Gateway-Key"); got != "gateway-secret" {
+		t.Errorf("gateway header: got %q", got)
 	}
 }
 
@@ -640,6 +662,43 @@ func TestParseHeaders(t *testing.T) {
 		t.Errorf("Authorization header should be rejected without echoing its value: %v", err)
 	}
 	if h, err := parseHeaders(nil); h != nil || err != nil {
+		t.Errorf("nil input: got %v/%v", h, err)
+	}
+}
+
+func TestRequestHeadersFromFile(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "headers")
+	if err := os.WriteFile(file, []byte("X-Gateway-Key: file-secret\r\n\nX-Route: west\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h, err := requestHeaders([]string{"Content-Type: application/json", "@" + file, "X-Route: east"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := h.Get("X-Gateway-Key"); got != "file-secret" {
+		t.Errorf("gateway key: got %q", got)
+	}
+	if got, want := h.Values("X-Route"), []string{"west", "east"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("route values: got %v, want %v", got, want)
+	}
+	if got := h.Get("Content-Type"); got != "application/json" {
+		t.Errorf("content type: got %q", got)
+	}
+
+	const secret = "do-not-repeat-file-secret"
+	bad := filepath.Join(t.TempDir(), "bad-headers")
+	if err := os.WriteFile(bad, []byte("malformed "+secret+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := requestHeaders([]string{"@" + bad}); err == nil ||
+		!strings.Contains(err.Error(), "line 1") || strings.Contains(err.Error(), secret) {
+		t.Errorf("malformed header file error must name the line without its value: %v", err)
+	}
+
+	if _, err := requestHeaders([]string{"@"}); err == nil || !strings.Contains(err.Error(), "empty @FILE") {
+		t.Errorf("empty header-file path: got %v", err)
+	}
+	if h, err := requestHeaders(nil); h != nil || err != nil {
 		t.Errorf("nil input: got %v/%v", h, err)
 	}
 }

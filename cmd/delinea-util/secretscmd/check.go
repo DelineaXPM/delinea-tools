@@ -361,6 +361,19 @@ func checkConfig(cc cliConfig) []finding {
 		}
 	}
 
+	if paths := cc.GatewayHeaderPaths(); len(paths) > 0 {
+		headers, herr := cli.ReadHeaderFiles(paths)
+		if herr == nil {
+			herr = api.ValidateHeaders(headers)
+		}
+		if herr != nil {
+			out = append(out, fail("DELINEA_TOOLS_GATEWAY_HEADER_FILE", herr.Error()))
+		} else {
+			out = append(out, ok("DELINEA_TOOLS_GATEWAY_HEADER_FILE",
+				fmt.Sprintf("%d %s loaded from %d %s; values are hidden", len(headers), plural(len(headers), "header"), len(paths), plural(len(paths), "file"))))
+		}
+	}
+
 	out = append(out, checkUnknownEnv()...)
 
 	if cc.TLSSkipVerify {
@@ -702,8 +715,9 @@ func cmdCheck(args []string) error {
 	sections := []section{{title: "configuration", findings: append(checkConfig(cc), stdinFindings...)}}
 
 	// Resolve the credential exactly as run/print do. Authentication happens after
-	// the credential-free health probe below, and the resulting token is reused by
-	// the optional mapping client so check never performs a duplicate grant.
+	// the Delinea-credential-free health probe below, and the resulting token is
+	// reused by the optional mapping client so check never performs a duplicate
+	// grant.
 	resolvedCfg, cfgErr := buildConfig(cc, strings.NewReader(stdinCred))
 	var client *ds.Client
 	var credValidErr error
@@ -730,17 +744,20 @@ func cmdCheck(args []string) error {
 	var mismatch string
 	probeFailed := false
 	var vault []finding
+	probeCfg, probeCfgErr := probeConfig(cc)
 	switch {
 	case url == "":
 		vault = append(vault, skip("reachability", "not probed: DELINEA_TOOLS_URL is not set"))
 	case cli.RequireSecureURL(url, "DELINEA_TOOLS_URL") != nil:
 		vault = append(vault, skip("reachability", "not probed: DELINEA_TOOLS_URL was rejected, see configuration above"))
+	case probeCfgErr != nil:
+		vault = append(vault, skip("reachability", "not probed: the gateway header file was rejected, see configuration above"))
 	default:
-		b, perr := api.ProbeBackend(context.Background(), probeConfig(cc))
+		b, perr := api.ProbeBackend(context.Background(), probeCfg)
 		backend = b
 		switch {
 		case b != api.BackendUnknown:
-			vault = append(vault, ok("backend", fmt.Sprintf("%s answered the health probe (no credential sent)", b)))
+			vault = append(vault, ok("backend", fmt.Sprintf("%s answered the health probe (no Delinea credential sent)", b)))
 			if mismatch = targetMismatch(target, b); mismatch != "" {
 				vault = append(vault, fail("DELINEA_TOOLS_TARGET", mismatch))
 			}
@@ -868,19 +885,28 @@ func authenticateCredential(ctx context.Context, cfg ds.Config, backend api.Back
 	return ds.New(resolved)
 }
 
-// probeConfig builds just enough configuration for an unauthenticated probe
-// from the parsed flags-over-env in cc (best-effort: a bad value is reported by
-// checkConfig, and the probe proceeds without it). It carries no credential, so
-// a probe cannot fail an authentication attempt.
-func probeConfig(cc cliConfig) api.Config {
+// probeConfig builds just enough configuration for a Delinea-credential-free
+// probe from the parsed flags-over-env in cc. Invalid gateway headers stop the
+// probe after checkConfig reports them as configuration failures. Configured
+// valid gateway headers are retained so the probe can reach the same-origin
+// service.
+func probeConfig(cc cliConfig) (api.Config, error) {
 	cfg := api.Config{URL: cc.URL, SkipTLSVerify: cc.TLSSkipVerify}
+	header, err := cli.ReadHeaderFiles(cc.GatewayHeaderPaths())
+	if err != nil {
+		return cfg, err
+	}
+	if err := api.ValidateHeaders(header); err != nil {
+		return cfg, err
+	}
+	cfg.Header = header
 	if pem, err := caCertBytes(cc.CACert); err == nil {
 		cfg.CACert = pem
 	}
 	if d, err := parseTimeout(cc.Timeout); err == nil {
 		cfg.Timeout = d
 	}
-	return cfg
+	return cfg, nil
 }
 
 // knownEnv is every DELINEA_TOOLS_ variable this tool reads — the same set the
@@ -901,6 +927,7 @@ var knownEnv = []string{
 	"DELINEA_TOOLS_RETRIES",
 	"DELINEA_TOOLS_TLS_SKIP_VERIFY",
 	"DELINEA_TOOLS_VAULT_ALLOW",
+	"DELINEA_TOOLS_GATEWAY_HEADER_FILE",
 }
 
 // checkUnknownEnv reports DELINEA_TOOLS_ variables the tool does not read. A

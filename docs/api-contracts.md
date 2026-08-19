@@ -148,8 +148,9 @@ path needs a human mailbox). Highest drift risk.
   `healthy` boolean whose value is true, or the exact trimmed legacy text
   `Healthy` compared case-insensitively. Other JSON, `Not Healthy`, HTML, and
   arbitrary text containing that word are not health verdicts. The probe sends
-  no credential, follows no redirects, and redacts configured routing-header
-  values from transport diagnostics.
+  no Delinea credential but does send configured same-origin gateway headers.
+  It follows no redirects and redacts configured header values from transport
+  diagnostics.
 
 ## Not pinned (caller-owned via `api.Do`)
 

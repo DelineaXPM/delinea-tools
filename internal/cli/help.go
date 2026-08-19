@@ -47,6 +47,7 @@ func GlobalFlags() []Flag {
 		{Long: "retries", Arg: "N", Desc: "retry attempts for transient failures ($DELINEA_TOOLS_RETRIES)"},
 		{Long: "tls-skip-verify", Desc: "disable TLS certificate verification ($DELINEA_TOOLS_TLS_SKIP_VERIFY)"},
 		{Long: "vault-allow", Arg: "HOST", Desc: "additional allowed vault host or exact host:port, repeatable ($DELINEA_TOOLS_VAULT_ALLOW)"},
+		{Long: "gateway-header-file", Arg: "FILE", Desc: "same-origin gateway headers, one 'Name: value' per line; repeatable ($DELINEA_TOOLS_GATEWAY_HEADER_FILE)"},
 		{Long: "secret-stdin", Desc: "read the credential secret from stdin instead of the environment"},
 	}
 }
@@ -69,7 +70,7 @@ func Credentials() string {
 		}
 	}
 	var b strings.Builder
-	b.WriteString("Credentials (never a flag; from the environment, or piped with --secret-stdin):\n")
+	b.WriteString("Delinea credentials (never a flag; from the environment, or piped with --secret-stdin):\n")
 	for i, n := range names {
 		fmt.Fprintf(&b, "      %-*s   %s\n", widest, n, descs[i])
 	}

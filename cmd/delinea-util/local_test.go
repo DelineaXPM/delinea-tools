@@ -27,6 +27,13 @@ func loopbackServer(t *testing.T) *httptest.Server {
 		}
 		fmt.Fprint(w, `{"ok":true}`)
 	})
+	mux.HandleFunc("/api/v1/header", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer test-token" || r.Header.Get("X-Request-Key") != "file-secret" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		fmt.Fprint(w, `{"ok":true}`)
+	})
 	mux.HandleFunc("/api/v1/missing", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		fmt.Fprint(w, `{"message":"no such thing"}`)
@@ -50,6 +57,7 @@ func clearAPIEnv(t *testing.T) {
 		"DELINEA_TOOLS_DOMAIN", "DELINEA_TOOLS_CLIENT_ID", "DELINEA_TOOLS_CLIENT_SECRET", "DELINEA_TOOLS_TOKEN",
 		"DELINEA_TOOLS_CA_CERT", "DELINEA_TOOLS_TLS_SKIP_VERIFY", "DELINEA_TOOLS_TIMEOUT", "DELINEA_TOOLS_RETRIES",
 		"DELINEA_TOOLS_VAULT_ALLOW",
+		"DELINEA_TOOLS_GATEWAY_HEADER_FILE",
 	} {
 		t.Setenv(n, "")
 		os.Unsetenv(n)
@@ -89,6 +97,56 @@ func TestLocalGet(t *testing.T) {
 	}
 	if out != `{"ok":true}` {
 		t.Errorf("body: got %q", out)
+	}
+}
+
+func TestLocalGetReadsSecretHeaderFile(t *testing.T) {
+	srv := loopbackServer(t)
+	clearAPIEnv(t)
+	t.Setenv("DELINEA_TOOLS_URL", srv.URL)
+	t.Setenv("DELINEA_TOOLS_TOKEN", "test-token")
+
+	headerFile := t.TempDir() + "/headers"
+	if err := os.WriteFile(headerFile, []byte("X-Request-Key: file-secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, code := runCapture(t, "-H", "@"+headerFile, "GET", "/api/v1/header")
+	if code != 0 || out != `{"ok":true}` {
+		t.Fatalf("header-file request: code=%d body=%q", code, out)
+	}
+}
+
+func TestLocalGatewayHeaderFileCoversGrantAndRequest(t *testing.T) {
+	const gatewaySecret = "gateway-secret"
+	mux := http.NewServeMux()
+	mux.HandleFunc("/oauth2/token", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Gateway-Key") != gatewaySecret {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		fmt.Fprint(w, `{"access_token":"gateway-token","token_type":"bearer","expires_in":3600}`)
+	})
+	mux.HandleFunc("/api/v1/thing", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Gateway-Key") != gatewaySecret || r.Header.Get("Authorization") != "Bearer gateway-token" {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		fmt.Fprint(w, `{"ok":true}`)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	clearAPIEnv(t)
+	t.Setenv("DELINEA_TOOLS_URL", srv.URL)
+	t.Setenv("DELINEA_TOOLS_USERNAME", "svc")
+	t.Setenv("DELINEA_TOOLS_PASSWORD", "pw")
+	headerFile := t.TempDir() + "/gateway.headers"
+	if err := os.WriteFile(headerFile, []byte("X-Gateway-Key: "+gatewaySecret+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, code := runCapture(t, "--gateway-header-file", headerFile, "GET", "/api/v1/thing")
+	if code != 0 || out != `{"ok":true}` {
+		t.Fatalf("gateway request: code=%d body=%q", code, out)
 	}
 }
 

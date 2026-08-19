@@ -172,6 +172,7 @@ ANY CI / SHELL
 The same two shapes work anywhere delinea-util runs: "secrets run -- <cmd>" to
 scope a secret to one process, or "eval \"$(delinea-util secrets print --via sh
 ...)\"" to load several into the current shell. For a file, use
-"secrets print --via raw --out FILE" (mode 0600, written only on success) or
+"secrets print --via raw --out FILE" (new/replaced regular files use mode 0600
+and are written only on success) or
 "secrets template --in FILE" to render a config from a Go text/template. Check a
 configuration without fetching a value with "delinea-util check".

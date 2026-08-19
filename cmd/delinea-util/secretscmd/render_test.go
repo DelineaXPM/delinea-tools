@@ -51,7 +51,7 @@ func everyFinding(t *testing.T) []section {
 		fail("DELINEA_TOOLS_TARGET", targetMismatch(api.TargetSecretServer, api.BackendPlatform)),
 		skip("reachability", "not probed: DELINEA_TOOLS_URL is not set"),
 		skip("reachability", "not probed: DELINEA_TOOLS_URL was rejected, see configuration above"),
-		ok("backend", "Secret Server answered the health probe (no credential sent)"),
+		ok("backend", "Secret Server answered the health probe (no Delinea credential sent)"),
 		fail("reachability", "Get \""+longURL+"/api/v1/healthcheck\": dial tcp: lookup host: no such host"),
 		fail("backend", "reachable, but neither the Secret Server nor the Platform health endpoint reported healthy; check the URL path"),
 		fail("stdin", "credential on stdin begins with a UTF-16LE byte-order mark, so it was re-encoded in transit; PowerShell encodes a pipeline to a native command using the console output encoding. Run [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) first, use PowerShell 7, or pipe from a byte-clean source"),

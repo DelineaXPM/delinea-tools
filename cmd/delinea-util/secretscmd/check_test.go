@@ -82,7 +82,10 @@ func TestProbeConfig(t *testing.T) {
 	// the environment set above and supply the URL the way a flag or env would.
 	cc := configFromEnv()
 	cc.URL = "https://vault.example.com"
-	cfg := probeConfig(cc)
+	cfg, err := probeConfig(cc)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if cfg.URL != "https://vault.example.com" {
 		t.Errorf("URL: got %q", cfg.URL)
 	}
@@ -98,6 +101,30 @@ func TestProbeConfig(t *testing.T) {
 	// A probe never carries a credential, whatever else is set.
 	if cfg.Username != "" || cfg.Password != "" || cfg.Token != "" {
 		t.Errorf("probeConfig carried a credential: %+v", cfg)
+	}
+}
+
+func TestCheckConfigGatewayHeaderErrorsHideValues(t *testing.T) {
+	clearDelineaEnv(t)
+	const secret = "do-not-repeat-gateway-secret"
+	for name, content := range map[string]string{
+		"syntax": "malformed " + secret + "\n",
+		"wire":   "Bad Name: " + secret + "\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "gateway.headers")
+			if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cc := cliConfig{URL: "https://vault.example.com", GatewayHeaderFiles: []string{path}}
+			f := findingFor(t, checkConfig(cc), "DELINEA_TOOLS_GATEWAY_HEADER_FILE")
+			if f.status != statusFail || strings.Contains(f.detail, secret) {
+				t.Errorf("got %+v, want a failure without the header value", f)
+			}
+			if _, err := probeConfig(cc); err == nil || strings.Contains(err.Error(), secret) {
+				t.Errorf("probeConfig error = %v, want a refusal without the header value", err)
+			}
+		})
 	}
 }
 

@@ -75,6 +75,51 @@ func loopbackPlatform(t *testing.T) *httptest.Server {
 	return srv
 }
 
+func loopbackGatewaySS(t *testing.T, gatewaySecret string) *httptest.Server {
+	t.Helper()
+	mux := http.NewServeMux()
+	guard := func(w http.ResponseWriter, r *http.Request) bool {
+		if r.Header.Get("X-Gateway-Key") == gatewaySecret {
+			return true
+		}
+		w.WriteHeader(http.StatusForbidden)
+		return false
+	}
+	mux.HandleFunc("/api/v1/healthcheck", func(w http.ResponseWriter, r *http.Request) {
+		if guard(w, r) {
+			fmt.Fprint(w, `{"healthy":true}`)
+		}
+	})
+	mux.HandleFunc("/oauth2/token", func(w http.ResponseWriter, r *http.Request) {
+		if guard(w, r) {
+			fmt.Fprint(w, `{"access_token":"test-token","token_type":"bearer","expires_in":3600}`)
+		}
+	})
+	mux.HandleFunc("/api/v1/users/current", func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w, r) {
+			return
+		}
+		if r.Header.Get("Authorization") == "Bearer test-token" {
+			fmt.Fprint(w, `{"id":1,"userName":"svc"}`)
+			return
+		}
+		w.WriteHeader(http.StatusUnauthorized)
+	})
+	mux.HandleFunc("/api/v1/secrets/128", func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w, r) {
+			return
+		}
+		if r.Header.Get("Authorization") == "Bearer test-token" {
+			fmt.Fprint(w, `{"id":128,"name":"db","items":[{"fieldName":"Password","slug":"password","itemValue":"s3cr3t"}]}`)
+			return
+		}
+		w.WriteHeader(http.StatusUnauthorized)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv
+}
+
 // runInProcess swaps os.Stdin and os.Stdout around dispatch, feeding stdin and
 // capturing stdout, so the whole CLI wiring runs in-process.
 func runInProcess(t *testing.T, stdin string, args ...string) (string, error) {
@@ -129,6 +174,28 @@ func TestLocalPrintJSON(t *testing.T) {
 	}
 	if got["DB"] != "s3cr3t" || got["U"] != "svc-db" {
 		t.Errorf("got %v, want both fields resolved", got)
+	}
+}
+
+func TestLocalGatewayHeaderFileCoversCheckAndSecretResolution(t *testing.T) {
+	const gatewaySecret = "gateway-secret"
+	srv := loopbackGatewaySS(t, gatewaySecret)
+	clearDelineaEnv(t)
+	headerFile := filepath.Join(t.TempDir(), "gateway.headers")
+	if err := os.WriteFile(headerFile, []byte("X-Gateway-Key: "+gatewaySecret+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DELINEA_TOOLS_URL", srv.URL)
+	t.Setenv("DELINEA_TOOLS_USERNAME", "svc")
+	t.Setenv("DELINEA_TOOLS_PASSWORD", "pw")
+	t.Setenv("DELINEA_TOOLS_GATEWAY_HEADER_FILE", headerFile)
+
+	out, err := runInProcess(t, "", "check", "--json", "DB=password#128")
+	if err != nil {
+		t.Fatalf("gateway check: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, `"label": "DB"`) || !strings.Contains(out, `"status": "ok"`) {
+		t.Fatalf("gateway check did not resolve the mapping:\n%s", out)
 	}
 }
 
@@ -499,6 +566,35 @@ func TestLocalCheckValidatesRetries(t *testing.T) {
 	}
 }
 
+func TestLocalCheckClassifiesInvalidGatewayHeaderAsConfiguration(t *testing.T) {
+	srv := loopbackSS(t)
+	clearDelineaEnv(t)
+	t.Setenv("DELINEA_TOOLS_URL", srv.URL)
+	const secret = "do-not-repeat-gateway-secret"
+	path := filepath.Join(t.TempDir(), "gateway.headers")
+	if err := os.WriteFile(path, []byte("Bad Name: "+secret+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DELINEA_TOOLS_GATEWAY_HEADER_FILE", path)
+
+	out, err := runInProcess(t, "", "check", "--no-auth", "--json")
+	if err == nil {
+		t.Fatalf("a wire-invalid gateway header must fail check\n%s", out)
+	}
+	if strings.Contains(out, secret) {
+		t.Fatalf("check output exposed the gateway header value: %s", out)
+	}
+	sections := checkSections(t, out)
+	if !hasFail(sections["configuration"], "DELINEA_TOOLS_GATEWAY_HEADER_FILE") {
+		t.Errorf("invalid gateway header was not a configuration failure:\n%s", out)
+	}
+	for _, f := range sections["vault"] {
+		if f.Label == "reachability" && f.Status == "FAIL" {
+			t.Errorf("local header error was misclassified as reachability: %+v\n%s", f, out)
+		}
+	}
+}
+
 // checkSections parses the --json output into its sections.
 func checkSections(t *testing.T, out string) map[string][]struct{ Status, Label, Detail string } {
 	t.Helper()
@@ -616,8 +712,8 @@ func TestLocalCheckValidatesPlatformBearerWithoutMappings(t *testing.T) {
 }
 
 // A bearer token needs no target for raw API requests. check uses the
-// credential-free probe to select its read-only validation endpoint without
-// changing how a later secrets mapping would be routed.
+// Delinea-credential-free probe to select its read-only validation endpoint
+// without changing how a later secrets mapping would be routed.
 func TestLocalCheckBearerAutoAgainstPlatformValidates(t *testing.T) {
 	srv := loopbackPlatform(t)
 	clearDelineaEnv(t)
@@ -670,13 +766,21 @@ func TestLocalCheckCredentialFreePlatformNeedsNoTarget(t *testing.T) {
 	}
 }
 
-// --no-auth keeps the credential out of every request: the grant endpoint must
+// --no-auth keeps the Delinea credential out of every request while retaining
+// a gateway header needed to reach the health endpoint. The grant endpoint must
 // not be touched, the credential section reports the skip, and check passes on
-// a healthy config — the mode a monitoring loop uses so a stale credential
-// cannot burn failed-login attempts.
-func TestLocalCheckNoAuthSendsNothing(t *testing.T) {
+// a healthy config — the mode a monitoring loop uses so a stale Delinea
+// credential cannot burn failed-login attempts.
+func TestLocalCheckNoAuthSkipsDelineaCredential(t *testing.T) {
+	const gatewaySecret = "gateway-secret"
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/v1/healthcheck", func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, `{"healthy":true}`) })
+	mux.HandleFunc("/api/v1/healthcheck", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Gateway-Key") != gatewaySecret {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		fmt.Fprint(w, `{"healthy":true}`)
+	})
 	var granted atomic.Bool
 	mux.HandleFunc("/oauth2/token", func(w http.ResponseWriter, r *http.Request) {
 		granted.Store(true)
@@ -689,6 +793,11 @@ func TestLocalCheckNoAuthSendsNothing(t *testing.T) {
 	t.Setenv("DELINEA_TOOLS_URL", srv.URL)
 	t.Setenv("DELINEA_TOOLS_USERNAME", "svc")
 	t.Setenv("DELINEA_TOOLS_PASSWORD", "stale-rotated-password")
+	headerFile := filepath.Join(t.TempDir(), "gateway.headers")
+	if err := os.WriteFile(headerFile, []byte("X-Gateway-Key: "+gatewaySecret+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DELINEA_TOOLS_GATEWAY_HEADER_FILE", headerFile)
 
 	out, err := runInProcess(t, "", "check", "--no-auth", "--json")
 	if err != nil {

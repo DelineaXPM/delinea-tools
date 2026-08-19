@@ -39,7 +39,7 @@ func TestEachCommandHasHelp(t *testing.T) {
 			"Usage:\n  delinea-util secrets " + name,
 			"\nFlags:\n",
 			"\nGlobal Flags:\n",
-			"Credentials (never a flag",
+			"Delinea credentials (never a flag",
 		} {
 			if !strings.Contains(h, want) {
 				t.Errorf("%s help missing %q", name, want)
@@ -47,8 +47,11 @@ func TestEachCommandHasHelp(t *testing.T) {
 		}
 	}
 	// check's help is surfaced by CheckUsage, in the same format.
-	if h := CheckUsage(rm); !strings.Contains(h, "Usage:\n  delinea-util check") || !strings.Contains(h, "\nFlags:\n") {
-		t.Errorf("check help is not the Cobra-style page:\n%s", h)
+	if h := CheckUsage(rm); !strings.Contains(h, "Usage:\n  delinea-util check") ||
+		!strings.Contains(h, "\nFlags:\n") ||
+		!strings.Contains(h, "Configured gateway headers still reach the") ||
+		!strings.Contains(h, "skip the Delinea credential") {
+		t.Errorf("check help is incomplete or not the Cobra-style page:\n%s", h)
 	}
 }
 

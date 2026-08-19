@@ -15,7 +15,8 @@ TARGETS AND AUTHENTICATION
   - Target inference: the grant style is chosen from which credential pair is
     set, or named explicitly with --target ss|platform.
   - Probe-driven target selection: Config.WithProbedTarget resolves an unset
-    target with one credential-free health probe, for the single-credential-pair
+    target with one Delinea-credential-free health probe (retaining configured
+    same-origin gateway headers), for the single-credential-pair
     integration shape. Only an authoritative healthy JSON boolean or the exact
     legacy text Healthy selects a backend.
   - Pre-obtained bearer tokens are accepted directly, skipping the grant.
@@ -36,8 +37,12 @@ THE CLI (delinea-util)
     the response body to stdout.
   - Verbs: METHOD PATH, token (--interactive for MFA login), check, and the
     secrets subcommand group (run, print, template).
-  - Request options: -d BODY (or @file, @-), -H headers, -i/--include (status
-    and headers), -v/--verbose (request/response summary on stderr).
+  - Request options: -d BODY (or @file, @-), -H headers (-H @FILE keeps secret
+    header values out of argv), -i/--include (status and headers), and
+    -v/--verbose (request/response summary on stderr).
+  - Same-origin gateways: --gateway-header-file / DELINEA_TOOLS_GATEWAY_HEADER_FILE
+    supplies headers to probes, grants, Identity requests, and primary-origin API
+    calls. Values stay out of argv and are never forwarded to a cross-origin vault.
   - Platform vault routing: --vault discovers the default vault through the
     broker and sends the request there; --vault-id targets a specific vault.
     Discovered routes refresh after five minutes and are revalidated before use.
@@ -61,8 +66,9 @@ SECRET RETRIEVAL AND DELIVERY (secrets group)
               (a stdin payload too large to prebuffer ahead of exec — over
               ~60KB — is streamed by a supervising parent instead); on Windows
               it supervises the child and propagates its exit code.
-  - print:    fetch and write to stdout, or to --out FILE (mode 0600, written
-              only on success).
+  - print:    fetch and write to stdout, or to --out FILE (new/replaced regular
+              files use mode 0600 and are written only on success; existing
+              special sinks and GitHub append files retain their mode).
   - template: render a Go text/template file with secret values substituted.
   - Mapping syntax: NAME=field#id or NAME=field@\folder\path; PREFIX_*=#id
     expands every non-file field with a slug into PREFIX_<SLUG> variables.
@@ -113,19 +119,23 @@ THE GO LIBRARIES
 SECURITY PROPERTIES
 -------------------
 
-  - The secret is never a command-line argument, tool-wide. Passwords, client
-    secrets, and bearer tokens come only from the environment or stdin — argv is
-    world-readable and leaks into shell history and CI logs.
+  - Delinea authentication secrets are never command-line arguments, tool-wide.
+    Passwords, client secrets, and bearer tokens come only from the environment
+    or stdin — argv is world-readable and leaks into shell history and CI logs.
+    Sensitive request bodies and headers use @FILE/stdin forms; gateway headers
+    are file-only.
   - Credential redaction is unconditional: every accepted bearer token,
     password, client secret, and interactive-login answer is redacted from
     diagnostics regardless of length. A short credential may also redact a
     matching ordinary word; confidentiality takes precedence over preserving
     that diagnostic text.
   - Config never formats a credential: the fmt verbs and json.Marshal render
-    Password/ClientSecret/Token as [REDACTED] (empty stays empty), and a URL's
-    userinfo/query/fragment are hidden — even when a struct embeds a Config.
-  - Nothing is written to disk unless asked; --out files are mode 0600 and only
-    on success, symlinks refused.
+    Password/ClientSecret/Token and header values as [REDACTED] (empty stays
+    empty), and a URL's userinfo/query/fragment are hidden — even when a struct
+    embeds a Config.
+  - Nothing is written to disk unless asked; --out creates or replaces regular
+    files at mode 0600 and only on success, with symlinks refused. Explicit
+    existing special sinks and GitHub append files retain their mode.
   - TLS trust is per-client: CACert and SkipTLSVerify never mutate
     http.DefaultTransport, so other HTTPS in the process is unaffected; TLS-trust
     settings scope the token cache; grants follow no redirects, cross-origin API

@@ -293,20 +293,23 @@ var rootValueFlags = map[string]rootValueSpec{
 	"--retries":     {func(v string, cc *cliConfig, o *options) { cc.Retries = v }, true},
 	"--vault-id":    {func(v string, cc *cliConfig, o *options) { o.vaultID = v }, true},
 	"--vault-allow": {func(v string, cc *cliConfig, o *options) { cc.VaultAllow = append(cc.VaultAllow, v) }, true},
-	"-d":            {func(v string, cc *cliConfig, o *options) { o.data, o.dataSet = v, true }, false},
-	"--data":        {func(v string, cc *cliConfig, o *options) { o.data, o.dataSet = v, true }, true},
-	"-H":            {func(v string, cc *cliConfig, o *options) { o.headers = append(o.headers, v) }, false},
-	"--header":      {func(v string, cc *cliConfig, o *options) { o.headers = append(o.headers, v) }, true},
+	"--gateway-header-file": {func(v string, cc *cliConfig, o *options) {
+		cc.GatewayHeaderFiles = append(cc.GatewayHeaderFiles, v)
+	}, true},
+	"-d":       {func(v string, cc *cliConfig, o *options) { o.data, o.dataSet = v, true }, false},
+	"--data":   {func(v string, cc *cliConfig, o *options) { o.data, o.dataSet = v, true }, true},
+	"-H":       {func(v string, cc *cliConfig, o *options) { o.headers = append(o.headers, v) }, false},
+	"--header": {func(v string, cc *cliConfig, o *options) { o.headers = append(o.headers, v) }, true},
 }
 
 func configFromEnv() cliConfig { return cli.ConnConfigFromEnv() }
 func parseArgs(args []string, cc *cliConfig) (*options, error) {
 	o := &options{}
-	// Secret material (password, client_secret, bearer token) is deliberately
-	// absent: it never comes from a command-line argument, because argv is
-	// world-readable (ps, /proc/<pid>/cmdline) and leaks into shell history and
-	// CI logs. It arrives from the environment or stdin only. The flags here
-	// carry identities and settings, which argv may safely hold.
+	// Authentication secret material (password, client_secret, bearer token) is
+	// deliberately absent: it never comes from a command-line argument, because
+	// argv is world-readable (ps, /proc/<pid>/cmdline) and leaks into shell
+	// history and CI logs. It arrives from the environment or stdin only. A
+	// sensitive request-header value similarly belongs in -H @FILE, not inline.
 	need := func(flag string, i int) (string, error) {
 		if i+1 >= len(args) {
 			return "", &cli.UsageError{Msg: fmt.Sprintf("%s needs a value", flag)}
@@ -345,6 +348,10 @@ func parseArgs(args []string, cc *cliConfig) (*options, error) {
 }
 
 func buildConfig(cc cliConfig) (da.Config, error) {
+	gatewayHeader, err := cli.ReadHeaderFiles(cc.GatewayHeaderPaths())
+	if err != nil {
+		return da.Config{}, err
+	}
 	// Timeout and Retries are left zero when unset: the engine owns the 30s
 	// and 3-attempt defaults, and pinning them here once duplicated them.
 	cfg := da.Config{
@@ -355,6 +362,7 @@ func buildConfig(cc cliConfig) (da.Config, error) {
 		ClientID:      cc.ClientID,
 		ClientSecret:  cc.ClientSecret,
 		Token:         cc.Token,
+		Header:        gatewayHeader,
 		SkipTLSVerify: cc.TLSSkipVerify,
 		// A one-shot CLI process grants at most once and reuses that within
 		// its single client's own memoized token; it never reads the shared
@@ -557,7 +565,7 @@ func cmdCallWithClient(client *da.Client, o *options, method, path string) error
 	if err != nil {
 		return err
 	}
-	hdr, err := parseHeaders(o.headers)
+	hdr, err := requestHeaders(o.headers)
 	if err != nil {
 		return err
 	}
@@ -675,21 +683,42 @@ func requestBody(o *options) (io.Reader, error) {
 	}
 }
 
-func parseHeaders(raw []string) (http.Header, error) {
+func parseHeaders(raw []string) (http.Header, error) { return cli.ParseHeaders(raw) }
+
+// requestHeaders expands @FILE arguments without placing their contents in
+// argv. A file contains one Name: value header per non-empty line. Errors from
+// parsing a file deliberately identify only the file and line ordinal, never
+// the line itself, because every header value is treated as potentially secret.
+func requestHeaders(raw []string) (http.Header, error) {
 	if len(raw) == 0 {
 		return nil, nil
 	}
 	h := http.Header{}
-	for i, s := range raw {
-		name, value, ok := strings.Cut(s, ":")
-		name = strings.TrimSpace(name)
-		if !ok || name == "" {
-			return nil, &cli.UsageError{Msg: fmt.Sprintf("invalid header argument %d (want 'Name: value')", i+1)}
+	for i, arg := range raw {
+		if strings.HasPrefix(arg, "@") {
+			file := strings.TrimPrefix(arg, "@")
+			if file == "" {
+				return nil, &cli.UsageError{Msg: fmt.Sprintf("header argument %d has an empty @FILE path", i+1)}
+			}
+			part, err := cli.ReadHeaderFile(file)
+			if err != nil {
+				return nil, err
+			}
+			for name, values := range part {
+				h[name] = append(h[name], values...)
+			}
+			continue
 		}
-		if strings.EqualFold(name, "Authorization") {
-			return nil, &cli.UsageError{Msg: "Authorization cannot be supplied with -H/--header; use DELINEA_TOOLS_TOKEN or --secret-stdin for a bearer token"}
+		part, err := parseHeaders([]string{arg})
+		if err != nil {
+			return nil, err
 		}
-		h.Add(name, strings.TrimSpace(value))
+		for name, values := range part {
+			h[name] = append(h[name], values...)
+		}
+	}
+	if len(h) == 0 {
+		return nil, nil
 	}
 	return h, nil
 }

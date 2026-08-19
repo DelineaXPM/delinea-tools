@@ -35,7 +35,7 @@ func topLevelHelp() string {
 	extra := cli.Credentials() + "\n\n" +
 		"DELINEA_TOOLS_URL is required for network commands. Requests and secret delivery\n" +
 		"also require one credential; check may run in reachability-only mode without one.\n" +
-		"check --no-auth additionally ignores any ambient credential."
+		"check --no-auth additionally ignores any ambient Delinea credential."
 	return cli.RootHelp("delinea-util", desc, usage, commands, topics, rootFlags, cli.GlobalFlags(), extra)
 }
 
@@ -48,7 +48,7 @@ func requestHelp() string {
 	usage := []string{"delinea-util METHOD PATH [flags]"}
 	flags := []cli.Flag{
 		{Short: "d", Long: "data", Arg: "BODY", Desc: "request body; @FILE reads a file, @- reads stdin; JSON Content-Type unless -H overrides"},
-		{Short: "H", Long: "header", Arg: "LINE", Desc: "extra request header 'Name: value', repeatable (not Authorization)"},
+		{Short: "H", Long: "header", Arg: "LINE", Desc: "extra request header 'Name: value'; @FILE reads one per line for secret values; repeatable (not Authorization)"},
 		{Long: "vault", Desc: "platform: route PATH to the default vault via the vault broker"},
 		{Long: "vault-id", Arg: "ID", Desc: "with --vault, target a specific vault (its vaultId)"},
 		{Short: "i", Long: "include", Desc: "include the status line and headers on stdout"},

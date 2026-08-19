@@ -107,6 +107,7 @@ func TestConnConfigFromEnv(t *testing.T) {
 		"DELINEA_TOOLS_CLIENT_ID": "client", "DELINEA_TOOLS_CLIENT_SECRET": "client-secret", "DELINEA_TOOLS_TOKEN": "token",
 		"DELINEA_TOOLS_CA_CERT": "ca.pem", "DELINEA_TOOLS_TIMEOUT": "12s", "DELINEA_TOOLS_RETRIES": "5",
 		"DELINEA_TOOLS_TLS_SKIP_VERIFY": "yes", "DELINEA_TOOLS_VAULT_ALLOW": "vault.example.com",
+		"DELINEA_TOOLS_GATEWAY_HEADER_FILE": "gateway.headers",
 	}
 	for key, value := range values {
 		t.Setenv(key, value)
@@ -114,10 +115,21 @@ func TestConnConfigFromEnv(t *testing.T) {
 	want := ConnConfig{
 		URL: "https://example.com", Target: "platform", Username: "user", Password: "password", Domain: "domain",
 		ClientID: "client", ClientSecret: "client-secret", Token: "token", CACert: "ca.pem", Timeout: "12s", Retries: "5",
-		TLSSkipVerify: true, VaultAllowEnv: "vault.example.com",
+		TLSSkipVerify: true, VaultAllowEnv: "vault.example.com", GatewayHeaderFileEnv: "gateway.headers",
 	}
 	if got := ConnConfigFromEnv(); !reflect.DeepEqual(got, want) {
 		t.Errorf("ConnConfigFromEnv = %#v, want %#v", got, want)
+	}
+}
+
+func TestGatewayHeaderPathsFlagWins(t *testing.T) {
+	cc := ConnConfig{GatewayHeaderFileEnv: "ambient", GatewayHeaderFiles: []string{"first", "second"}}
+	if got, want := cc.GatewayHeaderPaths(), []string{"first", "second"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+	cc.GatewayHeaderFiles = nil
+	if got, want := cc.GatewayHeaderPaths(), []string{"ambient"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("got %v, want %v", got, want)
 	}
 }
 

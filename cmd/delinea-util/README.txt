@@ -49,7 +49,7 @@ INSTALL
 USAGE
 -----
 
-  delinea-util [flags] METHOD PATH [-d BODY] [-H 'Name: value']
+  delinea-util [flags] METHOD PATH [-d BODY] [-H 'Name: value' | -H @FILE]
   delinea-util [flags] token [--interactive]
   delinea-util [flags] check [--json] [--quiet] [--no-auth] [--pass-env NAME]... [MAPPING...]
   delinea-util [flags] secrets run|print|template ...
@@ -80,9 +80,9 @@ CONFIGURATION
 Connection settings come from the environment. Most non-secret settings have a
 flag override (the flag wins). --tls-skip-verify is enable-only: when
 DELINEA_TOOLS_TLS_SKIP_VERIFY is true, unset it or set it false before the
-invocation to restore certificate verification. The secret itself — password,
-client_secret, or bearer token — is never a flag: it comes from the environment
-or --secret-stdin only, because argv is world-readable (ps,
+invocation to restore certificate verification. The authentication secret itself
+— password, client_secret, or bearer token — is never a flag: it comes from the
+environment or --secret-stdin only, because argv is world-readable (ps,
 /proc/<pid>/cmdline) and leaks into shell history and CI logs:
 
   DELINEA_TOOLS_URL              --url URL          Secret Server or Platform base URL
@@ -109,12 +109,20 @@ or --secret-stdin only, because argv is world-readable (ps,
   DELINEA_TOOLS_VAULT_ALLOW      --vault-allow H    extra trusted vault hosts (comma-separated;
                                                   the flag is repeatable, and giving it at
                                                   all replaces the env list — the flag wins)
+  DELINEA_TOOLS_GATEWAY_HEADER_FILE
+                                  --gateway-header-file FILE
+                                                  same-origin gateway headers, one
+                                                  Name: value per non-empty line; the
+                                                  flag is repeatable and replaces the
+                                                  environment file when present
 
 Request options:
 
   -d BODY | -d @FILE | -d @-   request body (@- reads stdin); Content-Type
                                defaults to application/json unless -H overrides
-  -H 'Name: value'             extra request header (repeatable; not Authorization)
+  -H 'Name: value' | -H @FILE extra request header (repeatable; not Authorization).
+                               FILE contains one header per non-empty line; use
+                               this form whenever a header value is secret
   --vault                      platform only: discover the default vault via the
                                vault broker and send PATH there, same bearer
   --vault-id ID                with --vault, target this specific vault (its
@@ -138,6 +146,13 @@ Request options:
                                set, or the bearer token otherwise (with both a
                                username and a client-id, --target is required);
                                incompatible with -d @- and token --interactive
+
+--gateway-header-file supplies headers needed to reach the configured service
+through a same-origin gateway. They are sent on health probes, token grants,
+Identity requests, and API calls to the primary origin, but never forwarded to a
+platform vault on another origin. The file path, not its values, appears in argv.
+By contrast, -H/--header belongs only to the one raw API request, so an
+endpoint-specific header is not exposed to a probe or token endpoint.
 
 The connection settings and the credential model are shared by every face of
 the tool: the raw verbs, check, and the secrets group all read the same
@@ -378,10 +393,11 @@ finds rather than stopping at the first, and exits non-zero if any check failed.
 
 Both the credential and the mappings are optional:
 
-  - Reachability-only mode (no credential): check still verifies the connection
-    settings, that DELINEA_TOOLS_CA_CERT is readable and parses, and that
+  - Reachability-only mode (no Delinea credential): check still verifies the
+    connection settings, that DELINEA_TOOLS_CA_CERT and
+    DELINEA_TOOLS_GATEWAY_HEADER_FILE are readable and parse, and that
     DELINEA_TOOLS_TIMEOUT and DELINEA_TOOLS_RETRIES are valid, and — with up to two
-    unauthenticated requests that send no credential (the Secret Server health
+    requests that send no Delinea credential (the Secret Server health
     endpoint, then the Platform one) — reports which service answers at
     DELINEA_TOOLS_URL. That answer is compared against DELINEA_TOOLS_TARGET, which
     decides whether a Secret Server username/password or a Platform OAuth
@@ -393,7 +409,7 @@ Both the credential and the mappings are optional:
     username/password or client_id/client_secret is verified by its token grant;
     a pre-obtained bearer token is verified with a read-only current-user (Secret
     Server) or vault-inventory (Platform) request. When no target is set, the
-    credential-free health probe selects that validation endpoint; this does not
+    Delinea-credential-free health probe selects that validation endpoint; this does not
     change the Secret Server default for secret mappings. A wrong or
     partial credential fails even when no mappings were supplied. The credential
     is deliberately not sent when the target contradicts the service the probe
@@ -401,9 +417,11 @@ Both the credential and the mappings are optional:
     A backend is selected only by 2xx JSON with healthy:true or the exact trimmed
     legacy text Healthy (case-insensitive), never by an HTML/error page that
     merely contains that word.
-  - --no-auth keeps the credential out of every request: configuration and
-    reachability are still checked, and the credential section reports the
-    skip. It does not read credential stdin, even with --secret-stdin. A
+  - --no-auth keeps the Delinea credential out of every request: configuration
+    and reachability are still checked, and the credential section reports the
+    skip. Configured gateway headers are still sent so the probe can reach a
+    protected same-origin health endpoint. It does not read credential stdin,
+    even with --secret-stdin. A
     monitoring loop uses this so a stale credential in its environment cannot
     burn failed-login attempts toward a lockout.
   - With mappings, check additionally resolves each one and reports the variable
@@ -467,8 +485,9 @@ on Windows).
             replaces itself with the child (nothing lingers); on Windows it
             supervises the child (see PLATFORM NOTES).
   print     fetch and write to stdout in the chosen format.
-  template  render --in (Go text/template, {{.NAME}} per mapping) to --out
-            (mode 0600) or stdout; a missing key is an error.
+  template  render --in (Go text/template, {{.NAME}} per mapping) to --out or
+            stdout; new/replaced regular output files use mode 0600; a missing
+            key is an error.
 
 To diagnose configuration, reachability, and the credential without fetching a
 secret, use the top-level "delinea-util check".
@@ -704,7 +723,7 @@ nothing plaintext lands on disk, on the command line, or in shell history):
   security find-generic-password -s delinea -a ss-pw -w \
     | delinea-util --secret-stdin secrets run DB_PASS=password#128 -- ./app
 
-  # a single secret to a file, mode 0600 (safer than '>', which uses the umask)
+  # a single secret to a new/replaced regular file, mode 0600
   secret-tool lookup service delinea account ss-pw \
     | delinea-util --secret-stdin secrets print --via raw --out tls.key 'TLS_KEY=private-key@\certs\prod'
 
@@ -974,7 +993,9 @@ SECURITY NOTES
     every face of the tool: the raw verbs, check, and the secrets group.
   - Fetched secret values never appear on the command line; only references do.
     A literal -d/--data request body does appear in argv, so use -d @- or
-    -d @FILE for a sensitive body.
+    -d @FILE for a sensitive body. An inline -H value also appears in argv; use
+    -H @FILE for a request-specific secret or --gateway-header-file for a secret
+    same-origin gateway header.
   - The CLI requires an https URL and refuses to connect over plaintext http
     (except to a loopback host for local testing), since the credential is sent
     on the first request.
@@ -1024,10 +1045,12 @@ Credential on stdin:
     [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false), use PowerShell 7,
     or pipe from a byte-clean source. cmd.exe and POSIX shells pass bytes through
     unchanged.
-  - secrets print --out / template --out write at mode 0600 (on Unix) and only
-    after a successful fetch or render. github-env and github-output append to
-    their shared command files; ado is stdout-only; other modes atomically
-    replace regular files.
+  - secrets print --out / template --out create or replace regular files at mode
+    0600 (on Unix) and only after a successful fetch or render. Explicit existing
+    special sinks such as FIFOs retain their mode. github-env and github-output
+    append to their shared command files without changing an existing
+    runner-owned file's mode; ado is stdout-only; other modes atomically replace
+    regular files.
     Prefer --out over a '>' redirect, which uses the shell umask and is
     re-encoded by PowerShell.
 
@@ -1076,8 +1099,10 @@ mapping, reporting variable names and value lengths, never values:
 
 To share one authenticated client — and its token cache — between raw api calls
 and secret resolution, build an api.Client and wrap it: sc := ds.NewWithClient(c).
-Config.CACert / Config.SkipTLSVerify configure TLS, and apply to this client's
-transport only. See "go doc github.com/DelineaXPM/delinea-tools/secrets".
+Config.Header carries same-origin gateway headers through probes, grants and API
+calls; its values are redacted from formatted Config output. Config.CACert /
+Config.SkipTLSVerify configure TLS, and apply to this client's transport only.
+See "go doc github.com/DelineaXPM/delinea-tools/secrets".
 
 Long-running services set Config.Logger (a *log/slog.Logger; nil is silent)
 to see token grant outcomes, request retries, vault selection, and discarded

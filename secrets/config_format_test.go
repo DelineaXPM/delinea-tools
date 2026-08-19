@@ -19,7 +19,10 @@ import (
 func TestConfigFormattingRedactsCredentials(t *testing.T) {
 	cache := api.NewMemoryCache()
 	cache.Store(api.CacheKey{Identity: "cache-key-secret"}, api.CachedToken{AccessToken: "cache-token-secret"})
-	cfg := Config{URL: "https://url-user:url-password@vault.example.com/path?token=query-secret#fragment-secret", Username: "svc", Password: "hunter2-pass", Token: "tok-abcd1234", Cache: cache}
+	cfg := Config{
+		URL: "https://url-user:url-password@vault.example.com/path?token=query-secret#fragment-secret", Username: "svc",
+		Password: "hunter2-pass", Token: "tok-abcd1234", Header: http.Header{"X-Gateway-Key": {"gateway-secret"}}, Cache: cache,
+	}
 	type role struct {
 		Name string
 		Config
@@ -36,7 +39,7 @@ func TestConfigFormattingRedactsCredentials(t *testing.T) {
 		"json":     string(jsonBytes),
 	}
 	for verb, out := range outputs {
-		for _, secret := range []string{"hunter2-pass", "tok-abcd1234", "cache-key-secret", "cache-token-secret", "url-user", "url-password", "query-secret", "fragment-secret"} {
+		for _, secret := range []string{"hunter2-pass", "tok-abcd1234", "gateway-secret", "cache-key-secret", "cache-token-secret", "url-user", "url-password", "query-secret", "fragment-secret"} {
 			if strings.Contains(out, secret) {
 				t.Errorf("%s leaked %q: %s", verb, secret, out)
 			}
@@ -115,9 +118,15 @@ func TestWithProbedTargetSetsTarget(t *testing.T) {
 }
 
 func TestEngineConfigForwardsInsecureHTTPOptIn(t *testing.T) {
-	engine := (Config{URL: "http://vault.internal", Token: "test-token", AllowInsecureHTTP: true}).EngineConfig()
+	engine := (Config{
+		URL: "http://vault.internal", Token: "test-token", AllowInsecureHTTP: true,
+		Header: http.Header{"X-Gateway-Key": {"secret"}},
+	}).EngineConfig()
 	if !engine.AllowInsecureHTTP {
 		t.Fatal("EngineConfig dropped AllowInsecureHTTP")
+	}
+	if engine.Header.Get("X-Gateway-Key") != "secret" {
+		t.Fatal("EngineConfig dropped Header")
 	}
 	if _, err := api.New(engine); err != nil {
 		t.Fatalf("forwarded config was rejected: %v", err)

@@ -22,20 +22,22 @@ const (
 )
 
 // maxHealthBody bounds a health response read; these bodies are a few hundred
-// bytes and the endpoint is unauthenticated, so it may be anything at all.
+// bytes and come from an endpoint that receives no Delinea credential, so they
+// are untrusted and may be anything at all.
 const maxHealthBody = 64 * 1024
 
 // ProbeBackend reports which service answers at cfg.URL: the Secret Server
 // health endpoint is tried first, then the Platform one. It sends configured
 // same-origin routing headers except Authorization, but ignores every
-// credential field on cfg, so a probe can never fail an authentication
-// attempt.
+// Delinea credential field on cfg. Config.Header may itself authenticate to a
+// same-origin gateway; it is the routing layer needed to reach the health
+// endpoint, not the Delinea credential the probe is intended to withhold.
 func ProbeBackend(ctx context.Context, cfg Config) (Backend, error) {
 	baseURL, err := parseBaseURL(cfg.URL, cfg.AllowInsecureHTTP)
 	if err != nil {
 		return BackendUnknown, err
 	}
-	if err := validateHTTPHeaders(cfg.Header); err != nil {
+	if err := ValidateHeaders(cfg.Header); err != nil {
 		return BackendUnknown, fmt.Errorf("%w: Config.Header: %v", ErrConfig, err)
 	}
 	client, cleanup, opaque, err := probeClient(cfg)
@@ -84,9 +86,9 @@ func ProbeBackend(ctx context.Context, cfg Config) (Backend, error) {
 // path the real client will use rather than a bare direct connection.
 // It refuses to follow redirects: the probe must observe only the origin it was
 // pointed at, so a hostile endpoint cannot redirect it to an internal host (a
-// credential-free SSRF oracle) or to a service that answers "Healthy" and
-// thereby flip the reported backend — which is what decides where the real
-// credential is later sent.
+// Delinea-credential-free SSRF oracle) or to a service that answers "Healthy"
+// and thereby flip the reported backend — which is what decides where the
+// real credential is later sent.
 func probeClient(cfg Config) (*http.Client, func(), bool, error) {
 	tr, opaque, err := newTransport(cfg)
 	if err != nil {
@@ -172,8 +174,9 @@ func classifyProbeTransport(err error, header http.Header, opaque bool) error {
 // the probe decides which grant it is, and the returned Config carries the
 // pair in the fields that grant reads. An explicit Target returns the Config
 // unchanged, so this is safe to call unconditionally; setting both pairs is
-// ambiguous and refused, exactly as New would. The probe sends no credential.
-// One probe per constructed Config — cache the result, not the call.
+// ambiguous and refused, exactly as New would. The probe sends no Delinea
+// credential, but does send configured same-origin gateway headers. One probe
+// per constructed Config — cache the result, not the call.
 func (c Config) WithProbedTarget(ctx context.Context) (Config, error) {
 	if c.Target != TargetAuto {
 		return c, nil

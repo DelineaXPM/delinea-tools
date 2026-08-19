@@ -475,7 +475,7 @@ func New(cfg Config) (*Client, error) {
 			return nil, fmt.Errorf("%w: invalid Token: %v", ErrConfig, err)
 		}
 	}
-	if err := validateHTTPHeaders(cfg.Header); err != nil {
+	if err := ValidateHeaders(cfg.Header); err != nil {
 		return nil, fmt.Errorf("%w: Config.Header: %v", ErrConfig, err)
 	}
 	target, err := resolveTarget(cfg)
@@ -1140,7 +1140,7 @@ func (c *Client) prepare(ctx context.Context, r Request) (method string, base *u
 	if r.VaultID != "" && !r.UseVault {
 		return "", nil, nil, "", false, fmt.Errorf("%w: VaultID is set but UseVault is not; set UseVault to route the call to that vault", ErrConfig)
 	}
-	if err := validateHTTPHeaders(r.Header); err != nil {
+	if err := ValidateHeaders(r.Header); err != nil {
 		return "", nil, nil, "", false, fmt.Errorf("%w: Request.Header: %v", ErrConfig, err)
 	}
 	if r.Body != nil {
@@ -1436,8 +1436,9 @@ func (c *Client) applyConfigHeader(req *http.Request) {
 	applyConfiguredHeader(req, c.cfg.Header)
 }
 
-// applyConfiguredHeader is shared with the unauthenticated backend probe so
-// gateway and virtual-host routing behave the same before and after New.
+// applyConfiguredHeader is shared with the Delinea-credential-free backend
+// probe so gateway and virtual-host routing behave the same before and after
+// New.
 func applyConfiguredHeader(req *http.Request, header http.Header) {
 	for k, vs := range header {
 		ck := http.CanonicalHeaderKey(k)
@@ -1475,6 +1476,11 @@ func setHostFromHeader(req *http.Request) {
 		req.Header.Del("Host")
 	}
 }
+
+// ValidateHeaders applies the same wire-level rules Config.Header and
+// Request.Header must satisfy. Returned errors identify a rejected header by
+// name but never reproduce its values, which may contain gateway credentials.
+func ValidateHeaders(h http.Header) error { return validateHTTPHeaders(h) }
 
 // validateHTTPHeaders applies net/http's wire-level header rules and rejects
 // names that collide after case-insensitive canonicalization before any

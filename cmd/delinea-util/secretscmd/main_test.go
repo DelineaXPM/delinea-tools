@@ -37,7 +37,7 @@ func TestUsageText(t *testing.T) {
 		"\n  print ", "\n  run ", "\n  template ",
 		"\nGlobal Flags:\n",
 		"(required) target base URL",
-		"Credentials (never a flag",
+		"Delinea credentials (never a flag",
 		`Use "delinea-util secrets COMMAND --help"`,
 	} {
 		if !strings.Contains(u, want) {
@@ -247,6 +247,7 @@ func clearDelineaEnv(t *testing.T) {
 		"DELINEA_TOOLS_CLIENT_SECRET", "DELINEA_TOOLS_TOKEN", "DELINEA_TOOLS_CA_CERT",
 		"DELINEA_TOOLS_TLS_SKIP_VERIFY", "DELINEA_TOOLS_TIMEOUT", "DELINEA_TOOLS_RETRIES",
 		"DELINEA_TOOLS_VAULT_ALLOW",
+		"DELINEA_TOOLS_GATEWAY_HEADER_FILE",
 	} {
 		t.Setenv(n, "")
 		os.Unsetenv(n)
@@ -853,6 +854,36 @@ func TestConfigFromEnvInsecureAndTimeout(t *testing.T) {
 	}
 	if cfg.Timeout != 45*time.Second {
 		t.Errorf("Timeout: got %v, want 45s", cfg.Timeout)
+	}
+}
+
+func TestConfigGatewayHeaderFile(t *testing.T) {
+	clearDelineaEnv(t)
+	path := filepath.Join(t.TempDir(), "gateway.headers")
+	if err := os.WriteFile(path, []byte("X-Gateway-Key: gateway-secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DELINEA_TOOLS_GATEWAY_HEADER_FILE", path)
+	cfg, err := buildConfig(configFromEnv(), strings.NewReader(""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Header.Get("X-Gateway-Key"); got != "gateway-secret" {
+		t.Errorf("gateway header: got %q", got)
+	}
+}
+
+func TestExtractConnFlagsGatewayHeaderFilesReplaceEnvironment(t *testing.T) {
+	cc := cliConfig{GatewayHeaderFileEnv: "ambient.headers"}
+	rest, err := extractConnFlags([]string{"--gateway-header-file", "first.headers", "--gateway-header-file=second.headers", "print", "DB=password#1"}, &cc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := cc.GatewayHeaderPaths(), []string{"first.headers", "second.headers"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+	if got, want := rest, []string{"print", "DB=password#1"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("rest: got %v, want %v", got, want)
 	}
 }
 
