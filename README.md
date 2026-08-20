@@ -70,7 +70,8 @@ delinea-util check DB_PASSWORD=password#126
 Authentication credentials are accepted through environment variables or
 stdin, never command-line values. Sensitive request bodies and headers have
 file/stdin forms. Diagnostics and operational logs redact configured
-credentials and suppress credential-bearing response headers. Secret output
+credentials; verbose diagnostics suppress every response-header value because
+an arbitrary API can issue a credential under any header name. Secret output
 refuses a terminal unless explicitly armed, and regular output files are
 replaced atomically at mode `0600` on Unix.
 

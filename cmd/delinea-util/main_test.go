@@ -522,29 +522,37 @@ func TestFprintResponseSummary(t *testing.T) {
 	resp.Header = h
 	var b strings.Builder
 	fprintResponseSummary(&b, resp)
-	want := "< HTTP/1.1 200 OK\n< Content-Type: application/json\n< X-Multi: 1\n< X-Multi: 2\n"
+	want := "< HTTP/1.1 200 OK\n< Content-Type: [REDACTED]\n< X-Multi: [REDACTED]\n< X-Multi: [REDACTED]\n"
 	if b.String() != want {
 		t.Errorf("summary:\ngot  %q\nwant %q", b.String(), want)
 	}
 }
 
-func TestFprintResponseSummarySuppressesCredentialHeaders(t *testing.T) {
+func TestFprintResponseSummarySuppressesEveryHeaderValue(t *testing.T) {
 	h := http.Header{
 		"Set-Cookie":          {"session=response-secret; Secure"},
 		"Authentication-Info": {`nextnonce="response-nonce"`},
-		"X-Trace":             {"visible"},
+		"X-Auth-Token":        {"custom-response-token"},
+		"Location":            {"https://example.test/callback?code=authorization-code"},
+		"X-Trace":             {"ordinary-diagnostic-value"},
 	}
 	_, resp := newDiagnosticResponse(t, "configured-token-value", nil, nil)
 	resp.Proto, resp.Status, resp.Header = "HTTP/1.1", "200 OK", h
 	var b strings.Builder
 	fprintResponseSummary(&b, resp)
 	got := b.String()
-	for _, secret := range []string{"response-secret", "response-nonce"} {
+	for _, secret := range []string{"response-secret", "response-nonce", "custom-response-token", "authorization-code", "ordinary-diagnostic-value"} {
 		if strings.Contains(got, secret) {
 			t.Errorf("summary disclosed %q: %q", secret, got)
 		}
 	}
-	for _, want := range []string{"< Authentication-Info: [REDACTED]", "< Set-Cookie: [REDACTED]", "< X-Trace: visible"} {
+	for _, want := range []string{
+		"< Authentication-Info: [REDACTED]",
+		"< Location: [REDACTED]",
+		"< Set-Cookie: [REDACTED]",
+		"< X-Auth-Token: [REDACTED]",
+		"< X-Trace: [REDACTED]",
+	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("summary missing %q: %q", want, got)
 		}

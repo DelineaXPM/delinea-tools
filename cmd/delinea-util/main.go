@@ -740,27 +740,17 @@ func sanitizedHeaders(h http.Header) iter.Seq2[string, string] {
 }
 
 // fprintResponseSummary prints the verbose (-v) response summary. Every field
-// is server-controlled and reaches a terminal, so it is bounded, sanitized,
-// and redacted with the exact credentials bound to this response.
+// is server-controlled and reaches a terminal, so status text and header names
+// are bounded, sanitized, and redacted with the exact request credentials bound
+// to this response. Header values are always suppressed: an arbitrary API can
+// issue a new credential in any header name, which no denylist can classify
+// completely. Callers that deliberately need raw response headers use -i.
 func fprintResponseSummary(w io.Writer, resp *da.Response) {
 	fmt.Fprintf(w, "< %s %s\n", responseDiagnosticText(resp, resp.Proto), responseDiagnosticText(resp, resp.Status))
 	for _, k := range slices.Sorted(maps.Keys(resp.Header)) {
-		for _, v := range resp.Header[k] {
-			value := responseDiagnosticText(resp, v)
-			if sensitiveResponseHeader(k) {
-				value = "[REDACTED]"
-			}
-			fmt.Fprintf(w, "< %s: %s\n", responseDiagnosticText(resp, k), value)
+		for range resp.Header[k] {
+			fmt.Fprintf(w, "< %s: [REDACTED]\n", responseDiagnosticText(resp, k))
 		}
-	}
-}
-
-func sensitiveResponseHeader(name string) bool {
-	switch http.CanonicalHeaderKey(name) {
-	case "Authorization", "Proxy-Authorization", "Cookie", "Set-Cookie", "Set-Cookie2", "Authentication-Info", "Proxy-Authentication-Info":
-		return true
-	default:
-		return false
 	}
 }
 

@@ -132,8 +132,9 @@ Request options:
                                instead of the default
   -i, --include                include the status line and headers on stdout
   -v, --verbose                request line, response status, and response
-                               headers on stderr; credential-bearing response
-                               header values are suppressed
+                               header names on stderr; every response-header
+                               value is suppressed because any header can issue
+                               a credential (use -i only when raw values are safe)
   --interactive                token only: obtain the token by interactive
                                Platform Identity API login (password + MFA
                                challenges) instead of the automatic grant, for
