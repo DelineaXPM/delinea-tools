@@ -33,7 +33,8 @@ RAW REST
   - -d accepts a literal body, @FILE, or @- for stdin. -H accepts ordinary
     headers or @FILE; gateway headers are file-only.
   - -i includes response status and headers. -v writes a credential-redacted
-    request/response summary to stderr.
+    request/response summary to stderr and suppresses credential-bearing
+    response header values such as Set-Cookie.
   - --vault routes through Platform vault discovery; --vault-id selects a
     specific broker entry. Alternate vault ports require an explicit
     host:port allowlist entry.

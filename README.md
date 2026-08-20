@@ -70,9 +70,9 @@ delinea-util check DB_PASSWORD=password#126
 Authentication credentials are accepted through environment variables or
 stdin, never command-line values. Sensitive request bodies and headers have
 file/stdin forms. Diagnostics and operational logs redact configured
-credentials and sensitive headers. Secret output refuses a terminal unless
-explicitly armed, and regular output files are replaced atomically at mode
-`0600` on Unix.
+credentials and suppress credential-bearing response headers. Secret output
+refuses a terminal unless explicitly armed, and regular output files are
+replaced atomically at mode `0600` on Unix.
 
 Token grants and mutating requests do not follow redirects. Cross-origin API
 redirects are refused. TLS configuration is client-local, and discovered vault

@@ -132,7 +132,8 @@ Request options:
                                instead of the default
   -i, --include                include the status line and headers on stdout
   -v, --verbose                request line, response status, and response
-                               headers on stderr
+                               headers on stderr; credential-bearing response
+                               header values are suppressed
   --interactive                token only: obtain the token by interactive
                                Platform Identity API login (password + MFA
                                challenges) instead of the automatic grant, for
@@ -160,7 +161,9 @@ endpoint-specific header is not exposed to a probe or token endpoint.
 Request-only -H/--header, -i/--include, and -v/--verbose are rejected by token;
 token-only --allow-terminal is rejected by raw requests. An explicit
 --vault-allow requires --vault (the ambient environment setting may remain set),
-and --vault-id requires --vault and a non-empty ID.
+and --vault-id requires --vault and a non-empty ID. For secrets commands, an
+explicit --vault-allow requires Platform resolution; an ambient allowlist may
+remain set when Secret Server is selected.
 
 The connection settings and the credential model are shared by every face of
 the tool: the raw verbs, check, and the secrets group all read the same
@@ -169,7 +172,8 @@ DELINEA_TOOLS_* variables and honor --secret-stdin the same way.
 --secret-stdin is the secret-manager integration path — it keeps the secret
 off argv and out of the process environment entirely. When the secret fills a
 password or client-secret slot, a lingering DELINEA_TOOLS_TOKEN is ignored so
-the piped credential, not a stale token, is what authenticates:
+the piped credential, not a stale token, is what authenticates. The command
+refuses to read a terminal; credential input must be piped or redirected:
 
   op read op://infra/delinea-svc/password | delinea-util --secret-stdin GET /api/v1/users/current
 

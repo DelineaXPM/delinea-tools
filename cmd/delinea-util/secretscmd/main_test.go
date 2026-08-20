@@ -977,6 +977,45 @@ func TestExtractConnFlagsGatewayHeaderFilesReplaceEnvironment(t *testing.T) {
 	}
 }
 
+func TestExtractConnFlagsRejectsUnusedExplicitVaultAllow(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		cc   cliConfig
+		args []string
+	}{
+		{"explicit secret server", cliConfig{}, []string{"--target", "ss", "--vault-allow", "vault.example.com", "print"}},
+		{"inferred secret server", cliConfig{Username: "u", Password: "p"}, []string{"--vault-allow", "vault.example.com", "print"}},
+		{"targetless token defaults to secret server", cliConfig{Token: "token"}, []string{"--vault-allow", "vault.example.com", "print"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := extractConnFlags(tc.args, &tc.cc)
+			if _, ok := errors.AsType[*cli.UsageError](err); !ok {
+				t.Fatalf("got %v, want *cli.UsageError", err)
+			}
+			if !strings.Contains(err.Error(), "only valid for Platform") {
+				t.Errorf("got %q, want Platform-only diagnostic", err)
+			}
+		})
+	}
+}
+
+func TestExtractConnFlagsAcceptsPlatformOrAmbientVaultAllow(t *testing.T) {
+	for _, cc := range []cliConfig{
+		{Target: "platform", ClientID: "client", ClientSecret: "secret"},
+		{ClientID: "client", ClientSecret: "secret"},
+		{ClientID: "client", Token: "stale", SecretStdin: true},
+		{Target: "ss", Username: "u", Password: "p", VaultAllowEnv: "ambient.example.com"},
+	} {
+		args := []string{"print"}
+		if cc.VaultAllowEnv == "" {
+			args = []string{"--vault-allow", "vault.example.com", "print"}
+		}
+		if _, err := extractConnFlags(args, &cc); err != nil {
+			t.Errorf("config %+v: %v", cc, err)
+		}
+	}
+}
+
 // The command tree and its README containment now live with package main, the
 // owner of the single unified README; see cmd/delinea-util's TestReadmeContainsTree
 // and TestCommandTree.

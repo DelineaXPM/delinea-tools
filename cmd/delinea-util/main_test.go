@@ -528,6 +528,29 @@ func TestFprintResponseSummary(t *testing.T) {
 	}
 }
 
+func TestFprintResponseSummarySuppressesCredentialHeaders(t *testing.T) {
+	h := http.Header{
+		"Set-Cookie":          {"session=response-secret; Secure"},
+		"Authentication-Info": {`nextnonce="response-nonce"`},
+		"X-Trace":             {"visible"},
+	}
+	_, resp := newDiagnosticResponse(t, "configured-token-value", nil, nil)
+	resp.Proto, resp.Status, resp.Header = "HTTP/1.1", "200 OK", h
+	var b strings.Builder
+	fprintResponseSummary(&b, resp)
+	got := b.String()
+	for _, secret := range []string{"response-secret", "response-nonce"} {
+		if strings.Contains(got, secret) {
+			t.Errorf("summary disclosed %q: %q", secret, got)
+		}
+	}
+	for _, want := range []string{"< Authentication-Info: [REDACTED]", "< Set-Cookie: [REDACTED]", "< X-Trace: visible"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("summary missing %q: %q", want, got)
+		}
+	}
+}
+
 func newDiagnosticResponse(t *testing.T, token string, configuredHeaders, requestHeaders http.Header) (*da.Client, *da.Response) {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -646,6 +669,8 @@ func TestNoOpFlagsHaveExplicitUsageErrors(t *testing.T) {
 		{"request allow terminal after", []string{"GET", "/x", "--allow-terminal"}, "only valid with token"},
 		{"request allow terminal before", []string{"--allow-terminal", "GET", "/x"}, "only valid with token"},
 		{"secret server vault before credential stdin", []string{"--target", "ss", "--secret-stdin", "GET", "/x", "--vault"}, "only supported for the platform target"},
+		{"inferred secret server vault before credential stdin", []string{"--username", "svc", "--secret-stdin", "GET", "/x", "--vault"}, "only supported for the platform target"},
+		{"ambiguous credential stdin before read", []string{"--username", "svc", "--client-id", "client", "--secret-stdin", "GET", "/x"}, "both a username and a client-id"},
 		{"token vault allow", []string{"token", "--vault-allow", "vault.example.com"}, "performs no vault request"},
 		{"request vault allow", []string{"GET", "/x", "--vault-allow", "vault.example.com"}, "requires --vault"},
 		{"empty vault id", []string{"GET", "/x", "--vault", "--vault-id="}, "non-empty ID"},
@@ -658,6 +683,30 @@ func TestNoOpFlagsHaveExplicitUsageErrors(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), tc.want) {
 				t.Errorf("got %q, want it to contain %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestRequestTargetsSecretServer(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		cc          cliConfig
+		secretStdin bool
+		want        bool
+	}{
+		{"explicit ss", cliConfig{Target: "ss", Token: "token"}, false, true},
+		{"explicit platform", cliConfig{Target: "platform", Username: "u", Password: "p"}, false, false},
+		{"inferred ss pair", cliConfig{Username: "u", Password: "p"}, false, true},
+		{"stdin completes ss pair", cliConfig{Username: "u", Token: "stale"}, true, true},
+		{"inferred platform pair", cliConfig{ClientID: "c", ClientSecret: "s"}, false, false},
+		{"stdin completes platform pair", cliConfig{ClientID: "c", Token: "stale"}, true, false},
+		{"token ignores stale ss identity", cliConfig{Username: "stale", Token: "token"}, false, false},
+		{"stdin without identity becomes token", cliConfig{Password: "stale"}, true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := requestTargetsSecretServer(tc.cc, tc.secretStdin); got != tc.want {
+				t.Errorf("got %v, want %v", got, tc.want)
 			}
 		})
 	}
@@ -822,6 +871,28 @@ func TestReadSecretStdin(t *testing.T) {
 	}
 	if _, err := readSecretStdin(strings.NewReader("\n")); err == nil {
 		t.Error("newline-only stdin should error")
+	}
+}
+
+func TestDispatchRefusesCredentialStdinTerminal(t *testing.T) {
+	f, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if !cli.IsTerminal(f) {
+		t.Skip("platform does not report the null device as a character device")
+	}
+	original := os.Stdin
+	os.Stdin = f
+	defer func() { os.Stdin = original }()
+
+	err = dispatch([]string{"--secret-stdin", "token"})
+	if _, ok := errors.AsType[*cli.UsageError](err); !ok {
+		t.Fatalf("got %v, want *cli.UsageError", err)
+	}
+	if !strings.Contains(err.Error(), "stdin is a terminal") {
+		t.Errorf("got %q, want terminal-specific diagnostic", err)
 	}
 }
 

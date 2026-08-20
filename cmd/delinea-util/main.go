@@ -153,6 +153,9 @@ func dispatch(args []string) error {
 		if o.dataSet && o.data == "@-" {
 			return &cli.UsageError{Msg: "--secret-stdin conflicts with -d @- (both read stdin)"}
 		}
+		if cli.IsTerminal(os.Stdin) {
+			return &cli.UsageError{Msg: "--secret-stdin requires piped credential input; stdin is a terminal"}
+		}
 		secret, err := readSecretStdin(os.Stdin)
 		if err != nil {
 			return err
@@ -171,6 +174,9 @@ func dispatch(args []string) error {
 // the selected operation. Keep this before reading credential stdin so an
 // invalid invocation fails immediately instead of consuming a secret first.
 func validateInvocation(cc cliConfig, o *options, cmd, method string, rest []string) error {
+	if o.secretStdin && cc.Target == "" && cc.Username != "" && cc.ClientID != "" {
+		return &cli.UsageError{Msg: "--secret-stdin: both a username and a client-id are set; pass --target ss or --target platform to name the credential the secret belongs to"}
+	}
 	switch {
 	case cmd == "token":
 		if len(rest) != 0 {
@@ -202,7 +208,7 @@ func validateInvocation(cc cliConfig, o *options, cmd, method string, rest []str
 		if o.allowTerminal {
 			return &cli.UsageError{Msg: "--allow-terminal is only valid with token"}
 		}
-		if o.useVault && cc.Target == "ss" {
+		if o.useVault && requestTargetsSecretServer(cc, o.secretStdin) {
 			return &cli.UsageError{Msg: "--vault is only supported for the platform target; omit --target or use --target platform"}
 		}
 		if o.vaultIDSet {
@@ -220,6 +226,34 @@ func validateInvocation(cc cliConfig, o *options, cmd, method string, rest []str
 	default:
 		return &cli.UsageError{Msg: fmt.Sprintf("unknown method or subcommand %q", cmd)}
 	}
+}
+
+// requestTargetsSecretServer predicts the target after --secret-stdin has
+// selected its credential slot, without consuming the credential. It mirrors
+// the engine's bearer-token precedence and automatic credential-pair routing.
+func requestTargetsSecretServer(cc cliConfig, secretStdin bool) bool {
+	if cc.Target == "ss" {
+		return true
+	}
+	if cc.Target == "platform" {
+		return false
+	}
+	if secretStdin {
+		switch {
+		case cc.Username != "" && cc.ClientID == "":
+			cc.Password, cc.Token = "stdin", ""
+		case cc.ClientID != "" && cc.Username == "":
+			cc.ClientSecret, cc.Token = "stdin", ""
+		default:
+			cc.Token = "stdin"
+		}
+	}
+	if cc.Token != "" {
+		return false
+	}
+	ss := cc.Username != "" || cc.Password != ""
+	platform := cc.ClientID != "" || cc.ClientSecret != ""
+	return ss && !platform
 }
 
 type rootBoolSpec struct {
@@ -712,8 +746,21 @@ func fprintResponseSummary(w io.Writer, resp *da.Response) {
 	fmt.Fprintf(w, "< %s %s\n", responseDiagnosticText(resp, resp.Proto), responseDiagnosticText(resp, resp.Status))
 	for _, k := range slices.Sorted(maps.Keys(resp.Header)) {
 		for _, v := range resp.Header[k] {
-			fmt.Fprintf(w, "< %s: %s\n", responseDiagnosticText(resp, k), responseDiagnosticText(resp, v))
+			value := responseDiagnosticText(resp, v)
+			if sensitiveResponseHeader(k) {
+				value = "[REDACTED]"
+			}
+			fmt.Fprintf(w, "< %s: %s\n", responseDiagnosticText(resp, k), value)
 		}
+	}
+}
+
+func sensitiveResponseHeader(name string) bool {
+	switch http.CanonicalHeaderKey(name) {
+	case "Authorization", "Proxy-Authorization", "Cookie", "Set-Cookie", "Set-Cookie2", "Authentication-Info", "Proxy-Authentication-Info":
+		return true
+	default:
+		return false
 	}
 }
 

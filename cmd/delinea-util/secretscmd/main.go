@@ -468,6 +468,9 @@ func extractConnFlags(args []string, cc *cliConfig) ([]string, error) {
 		name, inline, hasInline := cli.SplitInlineFlag(a)
 		switch {
 		case a == "--":
+			if err := validateConnFlagEffects(*cc); err != nil {
+				return nil, err
+			}
 			return append(rest, args[i:]...), nil
 		case cli.IsCredentialFlag(name):
 			return nil, cli.CredentialFlagError(name)
@@ -500,7 +503,37 @@ func extractConnFlags(args []string, cc *cliConfig) ([]string, error) {
 			rest, i = append(rest, a), i+1
 		}
 	}
+	if err := validateConnFlagEffects(*cc); err != nil {
+		return nil, err
+	}
 	return rest, nil
+}
+
+// validateConnFlagEffects rejects connection flags that cannot affect the
+// selected target before credential stdin is consumed. Environment-only
+// settings remain harmless when a shared shell configuration targets SS.
+func validateConnFlagEffects(cc cliConfig) error {
+	if len(cc.VaultAllow) == 0 {
+		return nil
+	}
+	target, err := parseTarget(cc.Target)
+	if err != nil {
+		return err
+	}
+	probe := cc
+	if probe.SecretStdin {
+		if err := applyStdinSecret(&probe, target, "stdin"); err != nil {
+			return err
+		}
+	}
+	platform, err := resolvePlatform(probe, target)
+	if err != nil {
+		return err
+	}
+	if !platform {
+		return &cli.UsageError{Msg: "--vault-allow is only valid for Platform secret resolution; use --target platform or omit --vault-allow"}
+	}
+	return nil
 }
 
 // buildConfig turns the raw cliConfig into a ds.Config, filling the credential
