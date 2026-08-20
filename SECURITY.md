@@ -5,9 +5,7 @@
 Report suspected vulnerabilities privately — please do not open a public GitHub
 issue. Use the **Report issue** link in Delinea's
 [Responsible Disclosure](https://trust.delinea.com/) portal, or contact Delinea
-product security through your usual Delinea support channel. After this
-repository is public, its **Security** tab may also offer private vulnerability
-reporting.
+product security through your usual Delinea support channel.
 
 ## Supply chain
 
@@ -44,10 +42,8 @@ it within one week of a high- or critical-severity standard-library advisory.
 ## Installation provenance
 
 delinea-tools does not publish prebuilt binaries or release archives. Install a
-reviewed tag from source with the `go install` command in `README.md`; the Go
-tool embeds the selected module version in the resulting binary. While the
-module is private, `GOPRIVATE` causes Go to fetch it directly from GitHub rather
-than authenticate it through the public checksum database, so consumers that
-need stronger provenance should verify the expected repository tag and commit
-before installation. The project does not currently publish signed artifacts,
-an SBOM, or a separate provenance attestation.
+reviewed tag from source with the `go install` command in `README.md`; standard
+Go module resolution verifies public module content through the Go checksum
+database, and the Go tool embeds the selected module version in the resulting
+binary. The project does not currently publish signed artifacts, an SBOM, or a
+separate provenance attestation.
