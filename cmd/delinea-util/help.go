@@ -50,7 +50,7 @@ func requestHelp() string {
 		{Short: "d", Long: "data", Arg: "BODY", Desc: "request body; @FILE reads a file, @- reads stdin; JSON Content-Type unless -H overrides"},
 		{Short: "H", Long: "header", Arg: "LINE", Desc: "extra request header 'Name: value'; @FILE reads one per line for secret values; repeatable (not Authorization)"},
 		{Long: "vault", Desc: "platform: route PATH to the default vault via the vault broker"},
-		{Long: "vault-id", Arg: "ID", Desc: "with --vault, target a specific vault (its vaultId)"},
+		{Long: "vault-id", Arg: "ID", Desc: "with --vault, target a specific vault by its non-empty vaultId"},
 		{Short: "i", Long: "include", Desc: "include the status line and headers on stdout"},
 		{Short: "v", Long: "verbose", Desc: "request line and response status/headers on stderr"},
 	}
@@ -72,7 +72,18 @@ func tokenHelp() string {
 		{Long: "interactive", Desc: "obtain the token by interactive Platform Identity API login (password + MFA challenges) for MFA-gated accounts, instead of the automatic grant; omitted --target means platform, --target ss is rejected; not with --secret-stdin"},
 		{Long: "allow-terminal", Desc: "allow printing the token to a terminal (refused by default)"},
 	}
-	return cli.CommandHelp("token", long, usage, flags, cli.GlobalFlags(), cli.Credentials())
+	return cli.CommandHelp("token", long, usage, flags, tokenGlobalFlags(), cli.Credentials())
+}
+
+func tokenGlobalFlags() []cli.Flag {
+	all := cli.GlobalFlags()
+	flags := make([]cli.Flag, 0, len(all)-1)
+	for _, flag := range all {
+		if flag.Long != "vault-allow" {
+			flags = append(flags, flag)
+		}
+	}
+	return flags
 }
 
 // usageFor returns the command name and help text to show alongside a usage

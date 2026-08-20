@@ -142,6 +142,10 @@ func dispatch(args []string) error {
 			cc.Target = "platform"
 		}
 	}
+	method := strings.ToUpper(cmd)
+	if err := validateInvocation(cc, o, cmd, method, rest); err != nil {
+		return err
+	}
 	if o.secretStdin {
 		if o.interactive {
 			return &cli.UsageError{Msg: "token --interactive prompts on stdin; --secret-stdin is not supported"}
@@ -157,7 +161,16 @@ func dispatch(args []string) error {
 			return err
 		}
 	}
-	method := strings.ToUpper(cmd)
+	if cmd == "token" {
+		return cmdToken(cc, o)
+	}
+	return cmdCall(cc, o, method, rest[0])
+}
+
+// validateInvocation rejects flags that parse globally but have no meaning for
+// the selected operation. Keep this before reading credential stdin so an
+// invalid invocation fails immediately instead of consuming a secret first.
+func validateInvocation(cc cliConfig, o *options, cmd, method string, rest []string) error {
 	switch {
 	case cmd == "token":
 		if len(rest) != 0 {
@@ -166,15 +179,41 @@ func dispatch(args []string) error {
 		if o.dataSet {
 			return &cli.UsageError{Msg: "token takes no request body"}
 		}
-		if o.useVault || o.vaultID != "" {
+		if len(o.headers) != 0 {
+			return &cli.UsageError{Msg: "token does not take -H/--header; use --gateway-header-file for headers required by the token grant"}
+		}
+		if o.include {
+			return &cli.UsageError{Msg: "-i/--include applies only to raw METHOD PATH requests"}
+		}
+		if o.verbose {
+			return &cli.UsageError{Msg: "-v/--verbose applies only to raw METHOD PATH requests"}
+		}
+		if o.useVault || o.vaultIDSet {
 			return &cli.UsageError{Msg: "token does not take --vault or --vault-id"}
 		}
-		return cmdToken(cc, o)
+		if len(cc.VaultAllow) != 0 {
+			return &cli.UsageError{Msg: "token does not take --vault-allow; it performs no vault request"}
+		}
+		return nil
 	case httpMethods[method]:
 		if len(rest) != 1 {
 			return &cli.UsageError{Msg: fmt.Sprintf("%s requires exactly one PATH", method)}
 		}
-		return cmdCall(cc, o, method, rest[0])
+		if o.allowTerminal {
+			return &cli.UsageError{Msg: "--allow-terminal is only valid with token"}
+		}
+		if o.vaultIDSet {
+			if o.vaultID == "" {
+				return &cli.UsageError{Msg: "--vault-id requires a non-empty ID"}
+			}
+			if !o.useVault {
+				return &cli.UsageError{Msg: "--vault-id has no effect without --vault"}
+			}
+		}
+		if len(cc.VaultAllow) != 0 && !o.useVault {
+			return &cli.UsageError{Msg: "--vault-allow requires --vault; it only controls trust for a discovered Platform vault"}
+		}
+		return nil
 	default:
 		return &cli.UsageError{Msg: fmt.Sprintf("unknown method or subcommand %q", cmd)}
 	}
@@ -273,6 +312,7 @@ type options struct {
 	headers       []string
 	useVault      bool
 	vaultID       string
+	vaultIDSet    bool
 	include       bool
 	verbose       bool
 	allowTerminal bool
@@ -291,15 +331,17 @@ type rootValueSpec struct {
 // and parseArgs. Adding a value-taking root flag here makes the router skip its
 // value and makes the parser accept and apply it.
 var rootValueFlags = map[string]rootValueSpec{
-	"--url":         {func(v string, cc *cliConfig, o *options) { cc.URL = v }, true},
-	"--target":      {func(v string, cc *cliConfig, o *options) { cc.Target = v }, true},
-	"--username":    {func(v string, cc *cliConfig, o *options) { cc.Username = v }, true},
-	"--domain":      {func(v string, cc *cliConfig, o *options) { cc.Domain = v }, true},
-	"--client-id":   {func(v string, cc *cliConfig, o *options) { cc.ClientID = v }, true},
-	"--ca-cert":     {func(v string, cc *cliConfig, o *options) { cc.CACert = v }, true},
-	"--timeout":     {func(v string, cc *cliConfig, o *options) { cc.Timeout = v }, true},
-	"--retries":     {func(v string, cc *cliConfig, o *options) { cc.Retries = v }, true},
-	"--vault-id":    {func(v string, cc *cliConfig, o *options) { o.vaultID = v }, true},
+	"--url":       {func(v string, cc *cliConfig, o *options) { cc.URL = v }, true},
+	"--target":    {func(v string, cc *cliConfig, o *options) { cc.Target = v }, true},
+	"--username":  {func(v string, cc *cliConfig, o *options) { cc.Username = v }, true},
+	"--domain":    {func(v string, cc *cliConfig, o *options) { cc.Domain = v }, true},
+	"--client-id": {func(v string, cc *cliConfig, o *options) { cc.ClientID = v }, true},
+	"--ca-cert":   {func(v string, cc *cliConfig, o *options) { cc.CACert = v }, true},
+	"--timeout":   {func(v string, cc *cliConfig, o *options) { cc.Timeout = v }, true},
+	"--retries":   {func(v string, cc *cliConfig, o *options) { cc.Retries = v }, true},
+	"--vault-id": {func(v string, cc *cliConfig, o *options) {
+		o.vaultID, o.vaultIDSet = v, true
+	}, true},
 	"--vault-allow": {func(v string, cc *cliConfig, o *options) { cc.VaultAllow = append(cc.VaultAllow, v) }, true},
 	"--gateway-header-file": {func(v string, cc *cliConfig, o *options) {
 		cc.GatewayHeaderFiles = append(cc.GatewayHeaderFiles, v)
@@ -559,9 +601,6 @@ func checkOutputSink(isTTY, allow bool) error {
 }
 
 func cmdCall(cc cliConfig, o *options, method, path string) error {
-	if o.vaultID != "" && !o.useVault {
-		return &cli.UsageError{Msg: "--vault-id has no effect without --vault"}
-	}
 	client, err := newClient(cc)
 	if err != nil {
 		return err

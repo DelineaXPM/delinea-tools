@@ -73,7 +73,7 @@ func TestPerCommandHelp(t *testing.T) {
 			t.Errorf("token help missing %q", want)
 		}
 	}
-	if strings.Contains(tok, "-d, --data") || strings.Contains(tok, "--vault-id") {
+	if strings.Contains(tok, "-d, --data") || strings.Contains(tok, "--vault-id") || strings.Contains(tok, "--vault-allow") {
 		t.Error("token help must not list request flags")
 	}
 }
@@ -613,6 +613,13 @@ func TestDispatchUsageErrors(t *testing.T) {
 		{"secret stdin with stdin body", []string{"POST", "/x", "-d", "@-", "--secret-stdin"}},
 		{"token with vault", []string{"token", "--vault"}},
 		{"token interactive with vault id", []string{"token", "--interactive", "--vault-id", "2"}},
+		{"token with header", []string{"token", "-H", "X-Test: value"}},
+		{"token with include", []string{"--include", "token"}},
+		{"token with verbose", []string{"token", "--verbose"}},
+		{"token with vault allow", []string{"--vault-allow", "vault.example.com", "token"}},
+		{"request with allow terminal", []string{"--allow-terminal", "GET", "/x"}},
+		{"request with unused vault allow", []string{"GET", "/x", "--vault-allow", "vault.example.com"}},
+		{"request with empty vault id", []string{"GET", "/x", "--vault", "--vault-id="}},
 		{"removed vaults verb", []string{"vaults"}},
 	}
 	for _, tc := range cases {
@@ -620,6 +627,37 @@ func TestDispatchUsageErrors(t *testing.T) {
 		if _, ok := errors.AsType[*cli.UsageError](err); !ok {
 			t.Errorf("%s: got %v, want *cli.UsageError", tc.name, err)
 		}
+	}
+}
+
+func TestNoOpFlagsHaveExplicitUsageErrors(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"token header after", []string{"token", "--header", "X-Test: value"}, "use --gateway-header-file"},
+		{"token header before", []string{"-H", "X-Test: value", "token"}, "use --gateway-header-file"},
+		{"token include after", []string{"token", "--include"}, "raw METHOD PATH requests"},
+		{"token include before", []string{"-i", "token"}, "raw METHOD PATH requests"},
+		{"token verbose after", []string{"token", "--verbose"}, "raw METHOD PATH requests"},
+		{"token verbose before", []string{"-v", "token"}, "raw METHOD PATH requests"},
+		{"request allow terminal after", []string{"GET", "/x", "--allow-terminal"}, "only valid with token"},
+		{"request allow terminal before", []string{"--allow-terminal", "GET", "/x"}, "only valid with token"},
+		{"token vault allow", []string{"token", "--vault-allow", "vault.example.com"}, "performs no vault request"},
+		{"request vault allow", []string{"GET", "/x", "--vault-allow", "vault.example.com"}, "requires --vault"},
+		{"empty vault id", []string{"GET", "/x", "--vault", "--vault-id="}, "non-empty ID"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := dispatch(tc.args)
+			if _, ok := errors.AsType[*cli.UsageError](err); !ok {
+				t.Fatalf("got %v, want *cli.UsageError", err)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("got %q, want it to contain %q", err, tc.want)
+			}
+		})
 	}
 }
 

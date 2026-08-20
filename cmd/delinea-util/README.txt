@@ -109,7 +109,8 @@ environment or --secret-stdin only, because argv is world-readable (ps,
                                                   and retriable statuses (default 3; 1 disables)
   DELINEA_TOOLS_VAULT_ALLOW      --vault-allow H    extra trusted vault hosts (comma-separated;
                                                   the flag is repeatable, and giving it at
-                                                  all replaces the env list — the flag wins)
+                                                  all replaces the env list — the flag wins;
+                                                  the explicit flag requires --vault)
   DELINEA_TOOLS_GATEWAY_HEADER_FILE
                                   --gateway-header-file FILE
                                                   same-origin gateway headers, one
@@ -126,7 +127,7 @@ Request options:
                                this form whenever a header value is secret
   --vault                      platform only: discover the default vault via the
                                vault broker and send PATH there, same bearer
-  --vault-id ID                with --vault, target this specific vault (its
+  --vault-id ID                with --vault, target this specific vault (its non-empty
                                vaultId from GET /vaultbroker/api/vaults)
                                instead of the default
   -i, --include                include the status line and headers on stdout
@@ -156,6 +157,10 @@ Identity requests, and API calls to the primary origin, but never forwarded to a
 platform vault on another origin. The file path, not its values, appears in argv.
 By contrast, -H/--header belongs only to the one raw API request, so an
 endpoint-specific header is not exposed to a probe or token endpoint.
+Request-only -H/--header, -i/--include, and -v/--verbose are rejected by token;
+token-only --allow-terminal is rejected by raw requests. An explicit
+--vault-allow requires --vault (the ambient environment setting may remain set),
+and --vault-id requires --vault and a non-empty ID.
 
 The connection settings and the credential model are shared by every face of
 the tool: the raw verbs, check, and the secrets group all read the same

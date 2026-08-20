@@ -161,8 +161,15 @@ func TestParseArgsVaultID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !o.useVault || o.vaultID != "7" {
-		t.Errorf("got useVault=%v vaultID=%q, want true/7", o.useVault, o.vaultID)
+	if !o.useVault || !o.vaultIDSet || o.vaultID != "7" {
+		t.Errorf("got useVault=%v vaultIDSet=%v vaultID=%q, want true/true/7", o.useVault, o.vaultIDSet, o.vaultID)
+	}
+	o, err = parseArgs([]string{"GET", "/x", "--vault-id="}, &cc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !o.vaultIDSet || o.vaultID != "" {
+		t.Errorf("empty vault ID: got vaultIDSet=%v vaultID=%q, want true/empty", o.vaultIDSet, o.vaultID)
 	}
 }
 
