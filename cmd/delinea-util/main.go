@@ -202,6 +202,9 @@ func validateInvocation(cc cliConfig, o *options, cmd, method string, rest []str
 		if o.allowTerminal {
 			return &cli.UsageError{Msg: "--allow-terminal is only valid with token"}
 		}
+		if o.useVault && cc.Target == "ss" {
+			return &cli.UsageError{Msg: "--vault is only supported for the platform target; omit --target or use --target platform"}
+		}
 		if o.vaultIDSet {
 			if o.vaultID == "" {
 				return &cli.UsageError{Msg: "--vault-id requires a non-empty ID"}
