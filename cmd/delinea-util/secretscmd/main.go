@@ -342,8 +342,8 @@ func cmdPrint(args []string, readme string) error {
 	if isGitHubFileMode(p.mode) {
 		// The mode's contract is masks-then-values, and the masks go to the
 		// step's stdout — writing the payload to stdout instead would mix the
-		// two streams or, worse, deliver unmasked values. Requiring --out is
-		// what keeps the "already masked in job logs" promise true.
+		// two streams or, worse, publish values before they are registered with
+		// the runner's best-effort masker. Requiring --out preserves that order.
 		if out == "" {
 			commandFile := "$GITHUB_ENV"
 			if p.mode == "github-output" {
