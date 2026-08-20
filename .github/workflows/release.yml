@@ -38,12 +38,13 @@ jobs:
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
-          GOBIN: ${{ runner.temp }}/bin
+          GOPATH: ${{ runner.temp }}/gopath
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           git config --global url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf https://github.com/
           go install "github.com/DelineaXPM/delinea-tools/cmd/delinea-util@${GITHUB_REF_NAME}"
-          binary="$GOBIN/delinea-util"
+          binary="$GOPATH/bin/${GOOS}_${GOARCH}/delinea-util"
+          if [ "${GOOS}/${GOARCH}" = linux/amd64 ]; then binary="$GOPATH/bin/delinea-util"; fi
           if [ "${GOOS}" = windows ]; then binary="${binary}.exe"; fi
           go version -m "$binary" | grep -F $'mod\tgithub.com/DelineaXPM/delinea-tools\t'"${GITHUB_REF_NAME}"
           package="delinea-util_${GITHUB_REF_NAME#v}_${GOOS}_${GOARCH}"
