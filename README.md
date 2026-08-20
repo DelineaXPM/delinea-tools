@@ -21,6 +21,11 @@ This repository has exactly that one Go module dependency.
 go install github.com/DelineaXPM/delinea-tools/cmd/delinea-util@v1.0.0
 ```
 
+Tagged releases also provide archives for Linux (`amd64`, `arm64`), macOS
+(`amd64`, `arm64`), and Windows (`amd64`) plus a `SHA256SUMS` file on the
+[GitHub Releases page](https://github.com/DelineaXPM/delinea-tools/releases).
+Verify the archive checksum before installing its binary.
+
 The binary contains its complete reference documentation:
 
 ```sh
@@ -82,7 +87,8 @@ caller's ambient environment.
 
 Use scoped `secrets run` delivery where possible. CI-specific GitHub and Azure
 formats validate names, escape their wire protocols, and register masks before
-publishing values, but platform masking remains best effort.
+publishing values, but platform masking remains best effort. Mapping resolution
+and format validation are all-or-nothing: a failure emits no partial payload.
 
 ## Documentation
 

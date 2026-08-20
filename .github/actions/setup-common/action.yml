@@ -1,10 +1,10 @@
-name: Set up private delinea-common access
-description: Configure read-only Git and Go access to the private common module.
+name: Set up delinea-common access
+description: Configure read-only Git and Go access while the common module is private; no-op after publication.
 
 inputs:
   deploy-key:
     description: Read-only deploy key registered on DelineaXPM/delinea-common.
-    required: true
+    required: false
 
 runs:
   using: composite
@@ -14,10 +14,10 @@ runs:
         DELINEA_COMMON_DEPLOY_KEY: ${{ inputs.deploy-key }}
       run: |
         set -eu
-        test -n "$DELINEA_COMMON_DEPLOY_KEY" || {
-          echo 'DELINEA_COMMON_DEPLOY_KEY is required while delinea-common is private' >&2
-          exit 1
-        }
+        if [ -z "$DELINEA_COMMON_DEPLOY_KEY" ]; then
+          echo 'No delinea-common deploy key supplied; using normal public module resolution.'
+          exit 0
+        fi
         runner_temp="$RUNNER_TEMP"
         if command -v cygpath >/dev/null 2>&1; then
           runner_temp=$(cygpath -u "$runner_temp")

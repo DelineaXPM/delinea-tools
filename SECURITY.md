@@ -3,9 +3,11 @@
 ## Reporting a vulnerability
 
 Report suspected vulnerabilities privately — please do not open a public GitHub
-issue. Use this repository's private vulnerability reporting (the **Security**
-tab → **Report a vulnerability**), or contact Delinea product security through
-your usual Delinea support channel.
+issue. Use the **Report issue** link in Delinea's
+[Responsible Disclosure](https://trust.delinea.com/) portal, or contact Delinea
+product security through your usual Delinea support channel. After this
+repository is public, its **Security** tab may also offer private vulnerability
+reporting.
 
 ## Supply chain
 
@@ -41,6 +43,9 @@ it within one week of a high- or critical-severity standard-library advisory.
 
 ## Release artifacts
 
-The supply-chain evidence shipped with a tagged release (checksums, SBOM, build
-provenance, signature) is being decided as part of public-release preparation
-and is not yet finalized.
+The tag-triggered release workflow builds archives for the supported Linux,
+macOS, and Windows targets from the tagged module and publishes a `SHA256SUMS`
+manifest with them. It verifies that the tag points at `main` and that each
+binary's embedded Go module version is the release tag. Release archives are
+not currently signed and do not include an SBOM or separate provenance
+attestation; consumers should verify the checksum and the GitHub tag/release.

@@ -138,6 +138,11 @@ different mapping name such as APP_SECRET or DEPLOY_PATH. Variable identity is
 case-insensitive too, so mappings such as TOKEN and token are rejected as
 duplicates before any logging command is emitted.
 
+The whole mapping set is resolved and validated before the first logging
+command is written. A mapping or formatter failure therefore publishes no
+partial variables. A later stdout I/O failure can still truncate the command
+stream; stdout itself has no transactional commit operation.
+
 Masking is a best-effort agent feature, not permission control. Azure does not
 mask substrings or fields within structured data, and an agent can be configured
 to ignore values below a minimum length. Never echo a secret. Prefer "secrets

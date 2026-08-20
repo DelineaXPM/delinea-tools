@@ -100,6 +100,35 @@ func TestLocalGet(t *testing.T) {
 	}
 }
 
+func TestSecretsPrintEmitsNothingWhenLaterMappingFails(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/oauth2/token", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"access_token":"test-token","token_type":"bearer","expires_in":3600}`)
+	})
+	mux.HandleFunc("/api/v1/secrets/1", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer test-token" {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		fmt.Fprint(w, `{"id":1,"items":[{"slug":"password","itemValue":"resolved-secret"}]}`)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	clearAPIEnv(t)
+	t.Setenv("DELINEA_TOOLS_URL", srv.URL)
+	t.Setenv("DELINEA_TOOLS_USERNAME", "u")
+	t.Setenv("DELINEA_TOOLS_PASSWORD", "p")
+
+	out, code := runCapture(t, "secrets", "print", "--via", "ado",
+		"GOOD=password#1", "BAD=missing#1")
+	if code == 0 {
+		t.Fatal("exit code: got 0, want the later mapping failure")
+	}
+	if out != "" {
+		t.Errorf("stdout: got %q, want no partial ADO commands", out)
+	}
+}
+
 func TestLocalGetReadsSecretHeaderFile(t *testing.T) {
 	srv := loopbackServer(t)
 	clearAPIEnv(t)

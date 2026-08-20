@@ -53,8 +53,10 @@ SECRET DELIVERY
     non-file fields with usable slugs.
   - File fields are downloaded and substituted transparently, subject to count
     and total-byte limits.
-  - Delivery validates the entire mapping set before publishing anything and
-    refuses variable collisions.
+  - Delivery validates and resolves the entire mapping set before publishing
+    anything and refuses variable collisions. Mapping or format failures emit
+    no partial payload; sink I/O failures can still be partial on non-atomic
+    stdout, append-file, and special-file protocols.
   - Modes include env, stdin, sh, json, raw, github-env, github-output, and ado.
   - GitHub and Azure modes validate platform-reserved names and register masks
     before publishing a value. Azure secret variables are single-line only.

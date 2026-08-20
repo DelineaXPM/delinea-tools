@@ -44,7 +44,7 @@ AT A GLANCE
 INSTALL
 -------
 
-  go install github.com/DelineaXPM/delinea-tools/cmd/delinea-util@latest
+  go install github.com/DelineaXPM/delinea-tools/cmd/delinea-util@v1.0.0
 
 USAGE
 -----
@@ -244,12 +244,12 @@ nothing while the old export is still set. To force a fresh grant, unset
 DELINEA_TOOLS_TOKEN first so the grant credentials win; check is the verb that
 validates a token against the server.
 
-A loop that outlives the token refreshes preemptively and treats a denial as
-the cue to re-grant once. The timer does the real work — pick a margin under
-the lifetime above, e.g. 900 seconds against Secret Server's 20-minute
-default; the retry is the net for revocation, which no timer can see. Retry
-once only: if a fresh token is also denied, the credentials themselves are
-bad, and looping on the grant endpoint feeds the lockout counter.
+A read loop that outlives the token can refresh preemptively. Pick a margin
+under the configured lifetime, e.g. 900 seconds against Secret Server's
+20-minute default. Restrict the helper to GET and HEAD: a generic wrapper must
+not replay a POST, PUT, PATCH, or DELETE after an ambiguous failure. Also do not
+treat every non-zero exit as expired authentication — exit 4 covers every
+non-2xx response, including an expected 404 or an authorization denial.
 
   token_born=0
   refresh_token() {
@@ -257,28 +257,23 @@ bad, and looping on the grant endpoint feeds the lockout counter.
     export DELINEA_TOOLS_TOKEN=$(delinea-util token)
     token_born=$(date +%s)
   }
-  call() {
+  read_call() {
+    case "$1" in GET|HEAD) ;; *) echo "read_call accepts only GET or HEAD" >&2; return 64;; esac
     if [ $(( $(date +%s) - token_born )) -ge 900 ]; then refresh_token; fi
-    delinea-util "$@" && return 0
-    rc=$?
-    if [ "$rc" -eq 2 ] || [ "$rc" -eq 4 ]; then
-      refresh_token
-      delinea-util "$@"; return $?
-    fi
-    return $rc
+    delinea-util "$@"
   }
 
-  refresh_token
-  for id in $(seq 1 10000); do
-    call GET "/api/v1/secrets/$id" > "out/$id.json"
-  done
+  refresh_token || exit
+  while IFS= read -r path; do
+    read_call GET "$path" >/dev/null || exit
+  done < read-paths.txt
 
-Exit 4 covers every non-2xx answer, not only 401: if your loop expects some
-4xx answers as data (probing ids for existence, say), gate the retry on the
-"HTTP 401" line on stderr instead, or each expected miss re-grants a token.
-The grant credentials stay exported for the whole run — something must be
-able to re-grant — so the spend-then-unset hygiene applies at script exit.
-The PowerShell version of this loop is at the end of EXAMPLES.
+If a call fails before the refresh deadline, stop and diagnose it rather than
+blindly replaying it. The common Go client has the response context needed to
+recover rejected cached tokens safely: it retries GET/HEAD only and never
+replays mutations. The grant credentials stay exported for the whole shell
+loop — something must be able to re-grant — so the spend-then-unset hygiene
+applies at script exit. The PowerShell equivalent is at the end of EXAMPLES.
 
 Go programs embedding the package (github.com/DelineaXPM/delinea-common/api)
 share tokens automatically: clients built without Config.Cache use one
@@ -782,25 +777,23 @@ shells. The same flows as above:
   $env:DELINEA_TOOLS_TOKEN = (delinea-util.exe token --interactive)
   Remove-Item Env:DELINEA_TOOLS_PASSWORD
 
-  # a loop that outlives the token: refresh preemptively (900s suits Secret
-  # Server's 20-minute default), retry once on denial — the reasoning, and
-  # the caveat about loops that expect 4xx answers as data, are in TOKEN REUSE
+  # a read loop that outlives the token: refresh preemptively (900s suits
+  # Secret Server's 20-minute default), and stop on a failed call
   $script:tokenBorn = [DateTime]::MinValue
   function Refresh-Token {
     Remove-Item Env:DELINEA_TOOLS_TOKEN -ErrorAction Ignore   # token passes it through
     $env:DELINEA_TOOLS_TOKEN = (delinea-util.exe token)
     $script:tokenBorn = [DateTime]::UtcNow
   }
-  function Invoke-DelineaApi {
+  function Invoke-DelineaRead {
+    param([ValidateSet('GET', 'HEAD')] [string] $Method, [string] $Path)
     if (([DateTime]::UtcNow - $script:tokenBorn).TotalSeconds -ge 900) { Refresh-Token }
-    delinea-util.exe @args
-    if ($LASTEXITCODE -in 2, 4) {
-      Refresh-Token
-      delinea-util.exe @args
-    }
+    delinea-util.exe $Method $Path
   }
-  foreach ($id in 1..10000) {
-    Invoke-DelineaApi GET "/api/v1/secrets/$id" > "out/$id.json"
+  Refresh-Token
+  foreach ($path in Get-Content .\read-paths.txt) {
+    Invoke-DelineaRead GET $path | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Delinea API read failed with exit $LASTEXITCODE" }
   }
 
 CI PIPELINES
@@ -847,6 +840,12 @@ because the agent reads logging commands there. It rejects multiline values:
 Azure rejects multiline secret variables under its safe default configuration.
 Use "secrets run" or same-step file delivery for keys and certificates. Masking
 is best-effort; never echo a secret.
+
+Resolution and formatting are all-or-nothing: every mapping must fetch,
+resolve, and validate before the first ##vso command is written. A failure
+therefore exits non-zero with no partial variable publication. An operating
+system write failure after emission begins can still leave a partial stdout
+stream; no stdout protocol can make a failed pipe atomic.
 
 GitLab CI: fetch in the job that consumes the values. There is deliberately
 no artifact-based delivery — a dotenv report would upload the values to the
@@ -1054,6 +1053,10 @@ Credential on stdin:
     regular files.
     Prefer --out over a '>' redirect, which uses the shell umask and is
     re-encoded by PowerShell.
+  - Mapping resolution and format validation complete before print emits any
+    payload. If either fails, stdout and regular --out destinations receive no
+    secret output. A later sink I/O failure can be partial for append files,
+    special files, or stdout; regular files retain atomic replacement.
 
 LIBRARY USAGE
 -------------

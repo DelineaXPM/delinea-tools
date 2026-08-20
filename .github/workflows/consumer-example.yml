@@ -45,6 +45,7 @@ jobs:
           FIELD: ${{ secrets.DELINEA_TOOLS_TEST_SS_SECRET_FIELD }}
           ID: ${{ secrets.DELINEA_TOOLS_TEST_SS_SECRET_ID }}
         run: |
+          # shellcheck disable=SC2016 # APP_SECRET expands in the wrapped shell, not this one.
           go run ./cmd/delinea-util secrets run "APP_SECRET=${FIELD}#${ID}" -- \
             sh -c 'test -n "$APP_SECRET" && echo "child received APP_SECRET (len ${#APP_SECRET})"'
 
@@ -76,4 +77,8 @@ jobs:
         env:
           EXPECT: ${{ secrets.DELINEA_TOOLS_TEST_SS_SECRET_VALUE }}
         run: |
-          [ "$APP_SECRET" = "$EXPECT" ] && echo "later step sees the expected secret (len ${#APP_SECRET})" || { echo "value mismatch"; exit 1; }
+          if [ "$APP_SECRET" != "$EXPECT" ]; then
+            echo "value mismatch"
+            exit 1
+          fi
+          echo "later step sees the expected secret (len ${#APP_SECRET})"
