@@ -1,0 +1,136 @@
+name: delinea-tools-ado-consumer-$(Date:yyyyMMdd)$(Rev:.r)
+
+# This pipeline is intentionally schedule/manual-only. It uses live tenant
+# credentials and must never run for pull requests or untrusted branches.
+# Required secret pipeline variables:
+#   DELINEA_COMMON_DEPLOY_KEY
+#   DELINEA_TOOLS_TEST_SS_USERNAME
+#   DELINEA_TOOLS_TEST_SS_PASSWORD
+#   DELINEA_TOOLS_TEST_SS_SECRET_VALUE
+# Required non-secret pipeline variables:
+#   DELINEA_TOOLS_TEST_SS_URL
+#   DELINEA_TOOLS_TEST_SS_SECRET_FIELD
+#   DELINEA_TOOLS_TEST_SS_SECRET_ID
+trigger: none
+pr: none
+
+schedules:
+  - cron: "47 6 * * 1"
+    displayName: Weekly live consumer verification
+    branches:
+      include:
+        - main
+    always: true
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  GO_VERSION: "1.26.6"
+
+jobs:
+  - job: release_resolution
+    displayName: Resolve the published release
+    steps:
+      - checkout: self
+        clean: true
+        fetchDepth: 1
+        persistCredentials: true
+
+      - task: GoTool@0
+        displayName: Use Go $(GO_VERSION)
+        inputs:
+          version: $(GO_VERSION)
+
+      - template: .azure-pipelines/setup-common.yml
+
+      - bash: |
+          set -euo pipefail
+          auth_file="$AGENT_TEMPDIRECTORY/github-auth-config"
+          auth_keys=()
+          cleanup_auth() {
+            for key in "${auth_keys[@]}"; do
+              git config --global --unset-all "$key" || true
+            done
+            rm -f "$auth_file"
+          }
+          trap cleanup_auth EXIT
+          umask 077
+          git -C "$BUILD_SOURCESDIRECTORY" config --local --get-regexp \
+            '^http\..*\.extraheader$' > "$auth_file"
+          while IFS=' ' read -r key value; do
+            git config --global "$key" "$value"
+            auth_keys+=("$key")
+          done < "$auth_file"
+          if [ "${#auth_keys[@]}" -eq 0 ]; then
+            echo 'checkout did not provide reusable GitHub authentication'
+            exit 1
+          fi
+          cd "$AGENT_TEMPDIRECTORY"
+          package=github.com/DelineaXPM/delinea-tools/cmd/delinea-util
+          go run "${package}@v1.0.0" --version
+        displayName: Run v1.0.0 outside the checkout
+
+      - bash: |
+          rm -f "$AGENT_TEMPDIRECTORY/delinea-common-deploy-key" \
+            "$AGENT_TEMPDIRECTORY/delinea-common-known-hosts"
+        displayName: Remove private module credentials
+        condition: always()
+
+  - job: consumer_delivery
+    displayName: Exercise Azure Pipelines delivery
+    steps:
+      - checkout: self
+        clean: true
+        fetchDepth: 1
+
+      - task: GoTool@0
+        displayName: Use Go $(GO_VERSION)
+        inputs:
+          version: $(GO_VERSION)
+
+      - template: .azure-pipelines/setup-common.yml
+
+      - bash: |
+          set -euo pipefail
+          # shellcheck disable=SC2016 # Expanded by the wrapped shell.
+          go run ./cmd/delinea-util secrets run "APP_SECRET=${FIELD}#${ID}" -- \
+            sh -c 'test -n "$APP_SECRET"'
+          echo 'wrapped command received its scoped secret'
+        displayName: Inject a secret into one command
+        env:
+          DELINEA_TOOLS_URL: $(DELINEA_TOOLS_TEST_SS_URL)
+          DELINEA_TOOLS_USERNAME: $(DELINEA_TOOLS_TEST_SS_USERNAME)
+          DELINEA_TOOLS_PASSWORD: $(DELINEA_TOOLS_TEST_SS_PASSWORD)
+          FIELD: $(DELINEA_TOOLS_TEST_SS_SECRET_FIELD)
+          ID: $(DELINEA_TOOLS_TEST_SS_SECRET_ID)
+
+      - bash: |
+          set -euo pipefail
+          go run ./cmd/delinea-util secrets print --via ado \
+            "DSS-test-value=${FIELD}#${ID}"
+        displayName: Publish a secret pipeline variable
+        env:
+          DELINEA_TOOLS_URL: $(DELINEA_TOOLS_TEST_SS_URL)
+          DELINEA_TOOLS_USERNAME: $(DELINEA_TOOLS_TEST_SS_USERNAME)
+          DELINEA_TOOLS_PASSWORD: $(DELINEA_TOOLS_TEST_SS_PASSWORD)
+          FIELD: $(DELINEA_TOOLS_TEST_SS_SECRET_FIELD)
+          ID: $(DELINEA_TOOLS_TEST_SS_SECRET_ID)
+
+      - bash: |
+          set -euo pipefail
+          if [ "$ACTUAL" != "$EXPECTED" ]; then
+            echo 'secret pipeline variable did not preserve the exact value'
+            exit 1
+          fi
+          echo 'later step received the exact secret pipeline variable'
+        displayName: Read the secret in a later step
+        env:
+          ACTUAL: $(DSS-test-value)
+          EXPECTED: $(DELINEA_TOOLS_TEST_SS_SECRET_VALUE)
+
+      - bash: |
+          rm -f "$AGENT_TEMPDIRECTORY/delinea-common-deploy-key" \
+            "$AGENT_TEMPDIRECTORY/delinea-common-known-hosts"
+        displayName: Remove private module credentials
+        condition: always()
