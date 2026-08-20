@@ -228,6 +228,20 @@ func TestCheckSecretsReportsCollision(t *testing.T) {
 	}
 }
 
+func TestCheckSecretsPreservesCaseDistinctNames(t *testing.T) {
+	client := ds.NewWithFetcher(verifyFake{})
+	got := checkSecrets(client, []ds.Mapping{
+		{EnvName: "TOKEN", SecretID: 1, Field: "password"},
+		{EnvName: "token", SecretID: 1, Field: "blank"},
+	})
+	if len(got) != 2 {
+		t.Fatalf("got %d findings, want one per case-distinct mapping: %+v", len(got), got)
+	}
+	if got[0].status != statusOK || got[1].status != statusWarn {
+		t.Errorf("got statuses %v and %v, want case-distinct mappings to remain independent", got[0].status, got[1].status)
+	}
+}
+
 func TestCheckConfigReportsQualifiedUsername(t *testing.T) {
 	clearDelineaEnv(t)
 	t.Setenv("DELINEA_TOOLS_URL", "https://vault.example.com")

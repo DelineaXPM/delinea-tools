@@ -14,7 +14,18 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	ds "github.com/DelineaXPM/delinea-common/secrets"
 )
+
+func TestUnixRunNamesAreCaseSensitive(t *testing.T) {
+	vars := []ds.Var{{Name: "TOKEN"}, {Name: "token"}}
+	for _, mode := range []string{"env", "stdin", "sh"} {
+		if err := checkRunCollisions(mode, vars); err != nil {
+			t.Errorf("%s collision: got %v, want case-distinct names accepted", mode, err)
+		}
+	}
+}
 
 // TestLaunchHelperProcess is re-executed as a child by the launch tests below.
 // When GO_LAUNCH_HELPER is set it calls launch, which exec-replaces this process

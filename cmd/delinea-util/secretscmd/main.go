@@ -280,7 +280,7 @@ func cmdRun(args []string, readme string) error {
 	if err != nil {
 		return err
 	}
-	if err := checkCollisions(vars); err != nil {
+	if err := checkRunCollisions(p.mode, vars); err != nil {
 		return err
 	}
 	if err := checkDeliverable("run", p.mode, vars); err != nil {
@@ -704,20 +704,38 @@ func parseRetries(s string) (int, error) {
 	return n, nil
 }
 
-// checkCollisions rejects two mappings that define the same variable, including
-// two expanded slugs that differ only in punctuation (api-key and api_key both
-// become PREFIX_API_KEY). Only one value would survive delivery, and which one
-// differs by mode, so the collision is refused rather than resolved. Names are
-// compared with envNameKey: on Windows the child's environment folds case, so
-// ApiKey and APIKEY are one variable there.
+// checkCollisions rejects two mappings that define the same sink-neutral name,
+// including two expanded slugs that normalize to one name (api-key and api_key
+// both become PREFIX_API_KEY). Case remains significant here: JSON, templates,
+// stdin, and POSIX shell variables can preserve TOKEN and token independently.
 func checkCollisions(vars []ds.Var) error {
 	seen := make(map[string]bool, len(vars))
 	for _, v := range vars {
-		key := envNameKey(v.Name)
-		if seen[key] {
+		if seen[v.Name] {
 			return fmt.Errorf("%s is defined more than once; drop or rename one of its mappings", v.Name)
 		}
-		seen[key] = true
+		seen[v.Name] = true
+	}
+	return nil
+}
+
+// checkRunCollisions applies the host environment's name identity only when
+// values actually enter a child environment. Other run protocols carry names
+// as case-sensitive data, even on Windows.
+func checkRunCollisions(mode string, vars []ds.Var) error {
+	if mode != "env" {
+		return checkCollisions(vars)
+	}
+	seen := make(map[string]string, len(vars))
+	for _, v := range vars {
+		key := envNameKey(v.Name)
+		if prior, ok := seen[key]; ok {
+			if prior == v.Name {
+				return fmt.Errorf("%s is defined more than once; drop or rename one of its mappings", v.Name)
+			}
+			return fmt.Errorf("%s and %s name the same child environment variable on this platform; drop or rename one of their mappings", prior, v.Name)
+		}
+		seen[key] = v.Name
 	}
 	return nil
 }

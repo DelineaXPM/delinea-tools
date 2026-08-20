@@ -10,6 +10,8 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+
+	ds "github.com/DelineaXPM/delinea-common/secrets"
 )
 
 const windowsTestPayloadSize = 128 * 1024
@@ -101,5 +103,14 @@ func TestWindowsEnvironmentNamesAreCaseInsensitive(t *testing.T) {
 	}
 	if envNameKey("Node_Options") != envNameKey("NODE_OPTIONS") {
 		t.Error("envNameKey does not fold Windows environment names")
+	}
+	vars := []ds.Var{{Name: "TOKEN"}, {Name: "token"}}
+	if err := checkRunCollisions("env", vars); err == nil || !strings.Contains(err.Error(), "same child environment variable") {
+		t.Errorf("env collision: got %v, want a case-insensitive Windows collision", err)
+	}
+	for _, mode := range []string{"stdin", "sh"} {
+		if err := checkRunCollisions(mode, vars); err != nil {
+			t.Errorf("%s collision: got %v, want case-distinct protocol names accepted", mode, err)
+		}
 	}
 }

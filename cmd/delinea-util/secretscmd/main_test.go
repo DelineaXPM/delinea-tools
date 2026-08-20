@@ -399,6 +399,9 @@ func TestCheckCollisions(t *testing.T) {
 	if err := checkCollisions([]ds.Var{{Name: "A"}, {Name: "B"}}); err != nil {
 		t.Errorf("distinct names: got %v, want nil", err)
 	}
+	if err := checkCollisions([]ds.Var{{Name: "TOKEN"}, {Name: "token"}}); err != nil {
+		t.Errorf("case-distinct sink-neutral names: got %v, want nil", err)
+	}
 	if err := checkCollisions(nil); err != nil {
 		t.Errorf("no vars: got %v, want nil", err)
 	}
@@ -1013,8 +1016,8 @@ func TestCheckRawCount(t *testing.T) {
 }
 
 func TestFormatJSONRaw(t *testing.T) {
-	jsonPayload := payloadFor("json", []ds.Var{{Name: "A", Value: "x"}, {Name: "B", Value: "y"}})
-	if got, want := string(jsonPayload), `{"A":"x","B":"y"}`; got != want {
+	jsonPayload := payloadFor("json", []ds.Var{{Name: "TOKEN", Value: "upper"}, {Name: "token", Value: "lower"}})
+	if got, want := string(jsonPayload), `{"TOKEN":"upper","token":"lower"}`; got != want {
 		t.Errorf("json payload: got %q, want %q", got, want)
 	}
 	rawPayload := payloadFor("raw", []ds.Var{{Name: "A", Value: "the-value"}})
@@ -1032,15 +1035,15 @@ func TestFormatJSONRaw(t *testing.T) {
 }
 
 func TestRenderTemplate(t *testing.T) {
-	tmpl, err := parseTemplate("password={{.DB}} user={{.U}}")
+	tmpl, err := parseTemplate("password={{.DB}} upper={{.TOKEN}} lower={{.token}}")
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := renderTemplate(tmpl, []ds.Var{{Name: "DB", Value: "s3cr3t"}, {Name: "U", Value: "svc"}})
+	out, err := renderTemplate(tmpl, []ds.Var{{Name: "DB", Value: "s3cr3t"}, {Name: "TOKEN", Value: "one"}, {Name: "token", Value: "two"}})
 	if err != nil {
 		t.Fatalf("got %v", err)
 	}
-	if got, want := string(out), "password=s3cr3t user=svc"; got != want {
+	if got, want := string(out), "password=s3cr3t upper=one lower=two"; got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }

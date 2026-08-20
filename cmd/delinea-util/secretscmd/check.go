@@ -630,28 +630,24 @@ func checkSecrets(client *ds.Client, mappings []ds.Mapping) []finding {
 	return append(out, collisionFindings(results)...)
 }
 
-// collisionFindings reports every variable more than one mapping defines, which
-// run, print and template refuse to deliver. Names are counted under
-// envNameKey exactly as checkCollisions compares them, so check cannot pass a
-// case-folded collision (ApiKey vs APIKEY on Windows) that run then refuses.
+// collisionFindings reports every sink-neutral name more than one mapping
+// defines, which run, print and template always refuse to deliver. Sink-specific
+// checks handle any narrower identity rules when a delivery mode is selected.
 func collisionFindings(results []ds.Result) []finding {
 	counts := map[string]int{}
-	firstSpelling := map[string]string{}
 	var order []string
 	for _, r := range results {
 		for _, f := range r.Fields {
-			key := envNameKey(f.Name)
-			if counts[key] == 0 {
-				order = append(order, key)
-				firstSpelling[key] = f.Name
+			if counts[f.Name] == 0 {
+				order = append(order, f.Name)
 			}
-			counts[key]++
+			counts[f.Name]++
 		}
 	}
 	var out []finding
-	for _, key := range order {
-		if counts[key] > 1 {
-			out = append(out, fail(firstSpelling[key], fmt.Sprintf("defined %d times across the mappings; run, print and template refuse the collision, so drop or rename one", counts[key])))
+	for _, name := range order {
+		if counts[name] > 1 {
+			out = append(out, fail(name, fmt.Sprintf("defined %d times across the mappings; run, print and template refuse the collision, so drop or rename one", counts[name])))
 		}
 	}
 	return out
