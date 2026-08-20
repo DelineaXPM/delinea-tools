@@ -489,8 +489,8 @@ secret, use the top-level "delinea-util check".
 
 Mappings:
 
-  NAME=field#id      env var NAME <- given field of the secret with that id
-  NAME=field@path    env var NAME <- given field of the secret at that folder path
+  NAME=field#id      output NAME <- given field of the secret with that id
+  NAME=field@path    output NAME <- given field of the secret at that folder path
   PREFIX_*=#id       one variable per field, named PREFIX_<SLUG>
   PREFIX_*=@path     same, resolving the secret by folder path
 
@@ -501,6 +501,12 @@ generates a slug. So the first occurrence of either is always the separator,
 and a path may contain both freely. Both kinds of reference stay reachable with
 no guessing — 'password#128' is the secret with id 128, and 'password@128' is a
 folderless secret named 128.
+
+Mapping names start with a letter or underscore and may contain letters, digits,
+underscores, dots, or hyphens. Delivery narrows that safe grammar to what the
+selected sink supports: env, stdin, sh, and both GitHub modes require environment
+identifiers (letters, digits, and underscores); Azure Pipelines also accepts dots
+and hyphens.
 
 Secret paths are folder paths, as the folders API reports them in folderPath:
 \folder\subfolder\Secret Name. Quote the mapping so the shell does not eat the
@@ -824,14 +830,14 @@ consumer. For a marketplace task that needs a pipeline variable, --via ado
 registers each non-empty value with the masker before publishing it as a secret
 variable:
 
-  - bash: delinea-util secrets print --via ado API_TOKEN=password#128
+  - bash: delinea-util secrets print --via ado DSS_private-key=password#128
     env:
       DELINEA_TOOLS_URL: $(DELINEA_URL)
       DELINEA_TOOLS_CLIENT_ID: $(DELINEA_CLIENT_ID)
       DELINEA_TOOLS_CLIENT_SECRET: $(DELINEA_CLIENT_SECRET)
   - task: ExampleDeploy@1
     inputs:
-      token: $(API_TOKEN)
+      token: $(DSS_private-key)
 
 The variable is available to subsequent steps in the same job only. Secret
 variables are not mapped into script environments automatically; use

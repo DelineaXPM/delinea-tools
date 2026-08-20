@@ -753,6 +753,16 @@ func checkDeliverable(cmd, mode string, vars []ds.Var) error {
 		// a dead end.
 		nulRemedy = "run has no delivery mode for it; write it with print --via raw or a template --out file instead"
 	}
+	// Resolution is sink-neutral because Azure macro variables admit dots and
+	// hyphens. Modes whose protocol names environment variables narrow that
+	// grammar here, before payloadFor or child environment construction.
+	if mode == "env" || mode == "stdin" || mode == "sh" {
+		for _, v := range vars {
+			if !ds.ValidEnvName(v.Name) {
+				return fmt.Errorf("%s is not a valid environment-variable name for --via %s (letters, digits, underscore; not starting with a digit)", v.Name, mode)
+			}
+		}
+	}
 	if isGitHubFileMode(mode) || mode == "ado" {
 		// The formatter owns the format's constraints; run it once for the
 		// verdict and keep its variable-naming errors verbatim.

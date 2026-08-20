@@ -1136,6 +1136,14 @@ func TestCheckDeliverable(t *testing.T) {
 	if err := checkDeliverable("print", "ado", []ds.Var{{Name: "MULTI", Value: "a\nb"}}); err == nil || !strings.Contains(err.Error(), "multiline") {
 		t.Errorf("ado with multiline value: got %v, want a multiline refusal", err)
 	}
+	for _, mode := range []string{"env", "stdin", "sh"} {
+		if err := checkDeliverable("print", mode, []ds.Var{{Name: "DSS_private-key", Value: "x"}}); err == nil || !strings.Contains(err.Error(), "environment-variable name") {
+			t.Errorf("%s with an ADO-only name: got %v, want an environment-name refusal", mode, err)
+		}
+	}
+	if err := checkDeliverable("print", "ado", []ds.Var{{Name: "DSS_private-key", Value: "x"}}); err != nil {
+		t.Errorf("ado with a hyphenated macro-variable name: got %v, want nil", err)
+	}
 	if err := checkDeliverable("print", "raw", notUTF8); err != nil {
 		t.Errorf("raw with invalid UTF-8: got %v, want nil", err)
 	}

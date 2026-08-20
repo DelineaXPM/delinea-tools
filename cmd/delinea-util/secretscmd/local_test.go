@@ -336,12 +336,12 @@ func TestLocalPrintADO(t *testing.T) {
 	t.Setenv("DELINEA_TOOLS_URL", srv.URL)
 	t.Setenv("DELINEA_TOOLS_USERNAME", "svc")
 
-	out, err := runInProcess(t, "pw\n", "print", "--secret-stdin", "--via", "ado", "DB_PASS=password#128", "DB_USER=username#128")
+	out, err := runInProcess(t, "pw\n", "print", "--secret-stdin", "--via", "ado", "DSS_private-key=password#128", "DB_USER=username#128")
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := "##vso[task.setsecret]s3cr3t\n" +
-		"##vso[task.setvariable variable=DB_PASS;issecret=true]s3cr3t\n" +
+		"##vso[task.setvariable variable=DSS_private-key;issecret=true]s3cr3t\n" +
 		"##vso[task.setsecret]svc-db\n" +
 		"##vso[task.setvariable variable=DB_USER;issecret=true]svc-db\n"
 	if out != want {

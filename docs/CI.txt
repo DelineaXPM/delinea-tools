@@ -106,14 +106,14 @@ single-line values as secret variables for later steps in the same job:
 
     steps:
       - bash: |
-          delinea-util secrets print --via ado API_TOKEN=password#128
+          delinea-util secrets print --via ado DSS_private-key=password#128
         env:
           DELINEA_TOOLS_URL: $(DELINEA_URL)
           DELINEA_TOOLS_CLIENT_ID: $(DELINEA_CLIENT_ID)
           DELINEA_TOOLS_CLIENT_SECRET: $(DELINEA_CLIENT_SECRET)
       - task: ExampleDeploy@1
         inputs:
-          token: $(API_TOKEN)
+          token: $(DSS_private-key)
 
 The mode writes Azure logging commands to stdout; do not use --out. For each
 non-empty value it registers task.setsecret before task.setvariable with
@@ -123,7 +123,7 @@ map it explicitly:
 
       - bash: ./deploy.sh
         env:
-          API_TOKEN: $(API_TOKEN)
+          DSS_PRIVATE_KEY: $(DSS_private-key)
 
 Azure's agent rejects multiline secret variables by default because its unsafe
 multiline opt-in can leave values insufficiently masked. Accordingly, --via ado
@@ -131,6 +131,10 @@ rejects CR and LF; use "secrets run" or same-step file delivery for a private
 key, certificate, or other multiline value. There is deliberately no
 isoutput=true support: fetch again in the consuming job instead of carrying a
 secret across job boundaries.
+
+Azure mapping names may contain dots and hyphens, preserving names such as
+DSS_private-key used by existing pipelines. Environment, shell, and GitHub
+delivery retain their stricter environment-identifier rule.
 
 Azure also reserves variable names beginning, case-insensitively, with endpoint,
 input, secret, path, or securefile. --via ado refuses those prefixes; choose a
