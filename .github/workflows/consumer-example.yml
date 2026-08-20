@@ -1,12 +1,12 @@
 name: consumer-example
 
 # A runnable example of how a consuming repo uses delinea-util in CI to fetch a
-# secret from Delinea Secret Server, in the two delivery shapes a pipeline uses.
+# secret from Delinea Secret Server, in the delivery shapes a pipeline uses.
 # It authenticates to the live test tenant through repository secrets, so it runs
 # on a schedule and on demand only — never on PRs (forks have no secrets).
 #
-# This file dogfoods the CLI from source (go run ./cmd/delinea-util). An external
-# consumer would instead run, with no checkout:
+# The delivery jobs dogfood the CLI from source. The release-resolution job also
+# runs the exact command an external consumer uses, from outside the checkout:
 #     go run github.com/DelineaXPM/delinea-tools/cmd/delinea-util@v1.0.0 ...
 #   or `go install github.com/DelineaXPM/delinea-tools/cmd/delinea-util@v1.0.0`
 #   once and call `delinea-util` from PATH.
@@ -22,6 +22,29 @@ permissions:
   contents: read
 
 jobs:
+  # Confirm that the documented, immutable release resolves with its dependency
+  # from a clean directory. Authentication below is needed only while the two
+  # repositories are private; the consumer command is the public-repo command.
+  release-resolution:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup-common
+        with:
+          deploy-key: ${{ secrets.DELINEA_COMMON_DEPLOY_KEY }}
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: resolve and run v1.0.0 outside the checkout
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          git config --global url."https://x-access-token:${GITHUB_TOKEN}@github.com/DelineaXPM/delinea-tools".insteadOf \
+            "https://github.com/DelineaXPM/delinea-tools"
+          cd "$RUNNER_TEMP"
+          go run github.com/DelineaXPM/delinea-tools/cmd/delinea-util@v1.0.0 --version
+
   # Pattern A — scoped injection. The secret lives only in the wrapped command's
   # environment; it never touches $GITHUB_ENV, a later step, or disk.
   run-form:
@@ -49,9 +72,9 @@ jobs:
           go run ./cmd/delinea-util secrets run "APP_SECRET=${FIELD}#${ID}" -- \
             sh -c 'test -n "$APP_SECRET" && echo "child received APP_SECRET (len ${#APP_SECRET})"'
 
-  # Pattern B — cross-step export. Write the secret into $GITHUB_ENV so a *later*
-  # step or a third-party action can read it. delinea-util emits ::add-mask::
-  # before publication; GitHub's resulting log redaction remains best effort.
+  # Pattern B — cross-step environment export. Include the UTF-8 attachment
+  # fixture to prove that GitHub preserves a value containing an LF. The later
+  # step compares values and digests without printing either secret.
   github-env-form:
     runs-on: ubuntu-latest
     steps:
@@ -70,15 +93,62 @@ jobs:
           DELINEA_TOOLS_PASSWORD: ${{ secrets.DELINEA_TOOLS_TEST_SS_PASSWORD }}
           FIELD: ${{ secrets.DELINEA_TOOLS_TEST_SS_SECRET_FIELD }}
           ID: ${{ secrets.DELINEA_TOOLS_TEST_SS_SECRET_ID }}
+          FILE_FIELD: ${{ secrets.DELINEA_TOOLS_TEST_SS_FILE_SECRET_FIELD }}
+          FILE_ID: ${{ secrets.DELINEA_TOOLS_TEST_SS_FILE_SECRET_ID }}
         run: |
           go run ./cmd/delinea-util secrets print --via github-env --out "$GITHUB_ENV" \
-            "APP_SECRET=${FIELD}#${ID}"
-      - name: a later step reads it from the environment
+            "APP_SECRET=${FIELD}#${ID}" "MULTILINE=${FILE_FIELD}#${FILE_ID}"
+      - name: a later step reads exact scalar and multiline values
         env:
+          EXPECT: ${{ secrets.DELINEA_TOOLS_TEST_SS_SECRET_VALUE }}
+          EXPECT_FILE_SHA256: ${{ secrets.DELINEA_TOOLS_TEST_SS_FILE_SHA256 }}
+        run: |
+          if [ "$APP_SECRET" != "$EXPECT" ]; then
+            echo "scalar value mismatch"
+            exit 1
+          fi
+          if [[ "$MULTILINE" != *$'\n'* ]]; then
+            echo "multiline value lost its line break"
+            exit 1
+          fi
+          actual_sha256=$(printf '%s' "$MULTILINE" | sha256sum | cut -d ' ' -f 1)
+          if [ "$actual_sha256" != "$EXPECT_FILE_SHA256" ]; then
+            echo "multiline value digest mismatch"
+            exit 1
+          fi
+          echo "later step received the exact scalar and multiline values"
+
+  # Pattern C — named step output. This uses GitHub's output expression in the
+  # next step rather than installing the value in every later step's environment.
+  github-output-form:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup-common
+        with:
+          deploy-key: ${{ secrets.DELINEA_COMMON_DEPLOY_KEY }}
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: publish a named secret output
+        id: secret
+        env:
+          DELINEA_TOOLS_URL: ${{ secrets.DELINEA_TOOLS_TEST_SS_URL }}
+          DELINEA_TOOLS_USERNAME: ${{ secrets.DELINEA_TOOLS_TEST_SS_USERNAME }}
+          DELINEA_TOOLS_PASSWORD: ${{ secrets.DELINEA_TOOLS_TEST_SS_PASSWORD }}
+          FIELD: ${{ secrets.DELINEA_TOOLS_TEST_SS_SECRET_FIELD }}
+          ID: ${{ secrets.DELINEA_TOOLS_TEST_SS_SECRET_ID }}
+        run: |
+          go run ./cmd/delinea-util secrets print --via github-output --out "$GITHUB_OUTPUT" \
+            "APP_SECRET=${FIELD}#${ID}"
+      - name: a later step reads the named output
+        env:
+          APP_SECRET: ${{ steps.secret.outputs.APP_SECRET }}
           EXPECT: ${{ secrets.DELINEA_TOOLS_TEST_SS_SECRET_VALUE }}
         run: |
           if [ "$APP_SECRET" != "$EXPECT" ]; then
-            echo "value mismatch"
+            echo "output value mismatch"
             exit 1
           fi
-          echo "later step sees the expected secret (len ${#APP_SECRET})"
+          echo "later step received the expected named output"
