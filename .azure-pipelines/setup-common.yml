@@ -1,6 +1,7 @@
-# DELINEA_COMMON_DEPLOY_KEY must be a secret pipeline variable while
-# delinea-common is private. Delete this template and its callers after the
-# module is public and normal Go module resolution is available.
+# DELINEA_COMMON_DEPLOY_KEY_B64 must contain a base64-encoded SSH private key
+# as a secret pipeline variable while delinea-common is private. Delete this
+# template and its callers after normal public Go module resolution is
+# available.
 steps:
   - bash: |
       set -euo pipefail
@@ -9,7 +10,8 @@ steps:
       github_host_key=AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl
       module_scope='github.com/DelineaXPM/*'
       umask 077
-      printf '%s\n' "$DELINEA_COMMON_DEPLOY_KEY" > "$key_file"
+      printf '%s' "$DELINEA_COMMON_DEPLOY_KEY_B64" \
+        | base64 --decode > "$key_file"
       printf '%s %s\n' 'github.com ssh-ed25519' "$github_host_key" \
         > "$known_hosts"
       git config --global \
@@ -24,4 +26,4 @@ steps:
       echo '##vso[task.setvariable variable=GIT_TERMINAL_PROMPT]0'
     displayName: Configure private delinea-common access
     env:
-      DELINEA_COMMON_DEPLOY_KEY: $(DELINEA_COMMON_DEPLOY_KEY)
+      DELINEA_COMMON_DEPLOY_KEY_B64: $(DELINEA_COMMON_DEPLOY_KEY_B64)
