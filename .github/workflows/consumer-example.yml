@@ -51,7 +51,7 @@ jobs:
 
   # Pattern B — cross-step export. Write the secret into $GITHUB_ENV so a *later*
   # step or a third-party action can read it. delinea-util emits ::add-mask::
-  # first, so GitHub redacts the value everywhere in the logs.
+  # before publication; GitHub's resulting log redaction remains best effort.
   github-env-form:
     runs-on: ubuntu-latest
     steps:

@@ -48,7 +48,7 @@ Scoped injection — the secret stays inside one command:
           psql -h db.internal -U app -c 'select 1'
 
 Cross-step export — put the secret in $GITHUB_ENV for later steps. delinea-util
-emits ::add-mask:: first, so GitHub redacts the value in the logs:
+registers each non-empty value line with ::add-mask:: before publishing it:
 
     - name: load a secret for later steps
       env: { DELINEA_TOOLS_URL: ..., DELINEA_TOOLS_USERNAME: ..., DELINEA_TOOLS_PASSWORD: ... }
@@ -58,8 +58,10 @@ emits ::add-mask:: first, so GitHub redacts the value in the logs:
 
 Choose "run" for the tightest scope (nothing masked because nothing is printed);
 choose "--via github-env" when a later step or an action you cannot wrap needs
-the value (broader, but masked in logs). A runnable version of both, exercised
-against a test tenant, lives in .github/workflows/consumer-example.yml.
+the value. This broader scope relies on GitHub's best-effort masking: transformed
+or structured values may not be redacted, so never echo a secret. A runnable
+version of both, exercised against a test tenant, lives in
+.github/workflows/consumer-example.yml.
 GitHub environment files carry valid UTF-8 and LF line breaks; this formatter
 refuses NUL and carriage returns. Normalize CRLF text first, or use scoped run or
 same-step raw file delivery when the value cannot be represented as Unix text.

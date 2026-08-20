@@ -558,8 +558,8 @@ Delivery (--via):
           require valid UTF-8 without NUL or carriage returns. Both require --out (usually --out
           "$GITHUB_ENV" or --out "$GITHUB_OUTPUT") and append, preserving
           entries from earlier step commands. An ::add-mask:: line per secret
-          line goes to stdout first, so the runner masks values in job logs
-          before anything can echo them
+          line goes to stdout before publication. Runner-side masking is best
+          effort; transformed or structured values may not be redacted
   ado     Azure Pipelines task.setsecret and secret task.setvariable commands
           (print only; stdout only). Values become secret pipeline variables
           for subsequent steps in the same job and must be valid UTF-8 without
@@ -676,8 +676,10 @@ SECRETS SAFETY
   - Two mappings that would define the same variable are refused before delivery
     — including two expanded slugs that differ only in punctuation (api-key and
     api_key both become PREFIX_API_KEY). check reports the collision the same way.
-  - CI systems do not mask values fetched at runtime; avoid echoing them, and
-    don't eval --via sh output under set -x.
+  - CI systems do not automatically mask values fetched at runtime. The GitHub
+    and Azure delivery modes register masks, but runner-side masking remains
+    best effort. Avoid echoing secrets, and don't eval --via sh output under
+    set -x.
 
 EXAMPLES
 --------
@@ -824,9 +826,10 @@ GitHub Actions, Azure Pipelines, and GitLab get their secrets with this binary
 alone — no wrapper code. The credential comes from the CI system's own secret
 store as DELINEA_TOOLS_* variables; the mappings say what to fetch.
 
-GitHub Actions: one step writes the variables for every later step, and the
-::add-mask:: lines the mode prints first mean the values are already masked
-in the job log before anything can echo them.
+GitHub Actions: one step writes the variables for every later step. The mode
+registers every non-empty value line with ::add-mask:: before publishing it.
+GitHub masking is best effort and may not redact transformed or structured
+values, so never echo a secret.
 
   - name: Fetch secrets
     env:
