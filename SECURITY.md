@@ -41,11 +41,13 @@ that affects this module, the `go` directive is advanced to that patch release
 team policy supersedes it, the repository maintainer owns this bump and targets
 it within one week of a high- or critical-severity standard-library advisory.
 
-## Release artifacts
+## Installation provenance
 
-The tag-triggered release workflow builds archives for the supported Linux,
-macOS, and Windows targets from the tagged module and publishes a `SHA256SUMS`
-manifest with them. It verifies that the tag points at `main` and that each
-binary's embedded Go module version is the release tag. Release archives are
-not currently signed and do not include an SBOM or separate provenance
-attestation; consumers should verify the checksum and the GitHub tag/release.
+delinea-tools does not publish prebuilt binaries or release archives. Install a
+reviewed tag from source with the `go install` command in `README.md`; the Go
+tool embeds the selected module version in the resulting binary. While the
+module is private, `GOPRIVATE` causes Go to fetch it directly from GitHub rather
+than authenticate it through the public checksum database, so consumers that
+need stronger provenance should verify the expected repository tag and commit
+before installation. The project does not currently publish signed artifacts,
+an SBOM, or a separate provenance attestation.
