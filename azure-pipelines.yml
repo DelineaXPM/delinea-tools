@@ -3,7 +3,7 @@ name: delinea-tools-ado-consumer-$(Date:yyyyMMdd)$(Rev:.r)
 # This pipeline is intentionally schedule/manual-only. It uses live tenant
 # credentials and must never run for pull requests or untrusted branches.
 # Required secret pipeline variables:
-#   DELINEA_COMMON_DEPLOY_KEY
+#   DELINEA_COMMON_DEPLOY_KEY_B64
 #   DELINEA_TOOLS_TEST_SS_USERNAME
 #   DELINEA_TOOLS_TEST_SS_PASSWORD
 #   DELINEA_TOOLS_TEST_SS_SECRET_VALUE
