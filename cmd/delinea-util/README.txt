@@ -68,7 +68,8 @@ Subcommands:
            DELINEA_TOOLS_TOKEN=$(delinea-util token); refuses to print to a
            terminal unless --allow-terminal is passed. With --interactive, get
            the token by interactive Platform Identity API login (password + MFA
-           challenges) for MFA-gated accounts instead of the automatic grant
+           challenges) for MFA-gated accounts instead of the automatic grant;
+           an omitted target means platform, and --target ss is rejected
   check    diagnose configuration, reachability, and the credential with
            read-only requests that never expose a secret value; see CHECK
   secrets  fetch secret values and deliver them to a process, file, or stdout;
@@ -134,7 +135,9 @@ Request options:
   --interactive                token only: obtain the token by interactive
                                Platform Identity API login (password + MFA
                                challenges) instead of the automatic grant, for
-                               MFA-gated accounts; prompts on stderr/stdin
+                               MFA-gated accounts; an omitted target means
+                               platform and --target ss is rejected; prompts on
+                               stderr/stdin
   --allow-terminal             token only: allow printing a bearer token
                                to a terminal (refused by default; $(...) and
                                pipes are always fine)
@@ -346,8 +349,10 @@ INTERACTIVE LOGIN (MFA-GATED ACCOUNTS)
 Accounts like cloudadmin@tenant are often MFA-gated and cannot use the OAuth2
 password grant ("Login failed."). Redirect-based federated (external IdP / SSO)
 logins are not supported: a redirect from the Identity API is refused.
-token --interactive walks
-the platform Identity API instead (StartAuthentication /
+token --interactive is Platform-only: an omitted target is treated as platform,
+while --target ss is rejected before any network request. Secret Server uses
+the ordinary password grant. Interactive mode walks the platform Identity API
+instead (StartAuthentication /
 AdvanceAuthentication): the password mechanism is answered from
 DELINEA_TOOLS_PASSWORD, and whatever second factor the account offers — an
 out-of-band challenge (an emailed link or code, SMS, or push) or an

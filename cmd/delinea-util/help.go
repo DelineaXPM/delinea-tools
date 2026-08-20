@@ -65,10 +65,11 @@ func tokenHelp() string {
 		"substitution and pipes are always fine.\n\n" +
 		"Requires: DELINEA_TOOLS_URL and one credential for automatic authentication.\n" +
 		"--interactive requires a username (--username or DELINEA_TOOLS_USERNAME) and\n" +
-		"DELINEA_TOOLS_PASSWORD from the environment; stdin carries MFA answers."
+		"DELINEA_TOOLS_PASSWORD from the environment; stdin carries MFA answers. It\n" +
+		"targets Platform when --target is omitted and rejects --target ss."
 	usage := []string{"delinea-util token [flags]"}
 	flags := []cli.Flag{
-		{Long: "interactive", Desc: "obtain the token by interactive Platform Identity API login (password + MFA challenges) for MFA-gated accounts, instead of the automatic grant; not with --secret-stdin"},
+		{Long: "interactive", Desc: "obtain the token by interactive Platform Identity API login (password + MFA challenges) for MFA-gated accounts, instead of the automatic grant; omitted --target means platform, --target ss is rejected; not with --secret-stdin"},
 		{Long: "allow-terminal", Desc: "allow printing the token to a terminal (refused by default)"},
 	}
 	return cli.CommandHelp("token", long, usage, flags, cli.GlobalFlags(), cli.Credentials())

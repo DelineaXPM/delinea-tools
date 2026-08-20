@@ -134,6 +134,14 @@ func dispatch(args []string) error {
 	if o.interactive && cmd != "token" {
 		return &cli.UsageError{Msg: "--interactive is only valid with token"}
 	}
+	if o.interactive {
+		if cc.Target == "ss" {
+			return &cli.UsageError{Msg: "token --interactive is only supported for the platform target; omit --target or use --target platform"}
+		}
+		if cc.Target == "" {
+			cc.Target = "platform"
+		}
+	}
 	if o.secretStdin {
 		if o.interactive {
 			return &cli.UsageError{Msg: "token --interactive prompts on stdin; --secret-stdin is not supported"}

@@ -13,8 +13,9 @@ TARGETS AND AUTHENTICATION
     domain.
   - Delinea Platform client-credentials grants.
   - A pre-obtained bearer token can skip the grant.
-  - Interactive Platform login supports native-account MFA challenges.
-    Federated/SSO redirects are refused.
+  - Interactive Platform login supports native-account MFA challenges. An
+    omitted target means platform; an explicit Secret Server target is refused
+    before any request. Federated/SSO redirects are refused.
   - The target can be explicit (--target ss|platform) or inferred from the
     configured credential pair. check can probe an unset target without sending
     a Delinea credential.

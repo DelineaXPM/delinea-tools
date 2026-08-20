@@ -607,6 +607,7 @@ func TestDispatchUsageErrors(t *testing.T) {
 		{"token interactive with extra arg", []string{"token", "--interactive", "x"}},
 		{"token interactive with body", []string{"token", "--interactive", "-d", "x"}},
 		{"token interactive with secret stdin", []string{"token", "--interactive", "--secret-stdin"}},
+		{"token interactive with ss target", []string{"--target", "ss", "token", "--interactive"}},
 		{"interactive on non-token", []string{"GET", "/x", "--interactive"}},
 		{"removed login verb", []string{"login"}},
 		{"secret stdin with stdin body", []string{"POST", "/x", "-d", "@-", "--secret-stdin"}},
@@ -619,6 +620,16 @@ func TestDispatchUsageErrors(t *testing.T) {
 		if _, ok := errors.AsType[*cli.UsageError](err); !ok {
 			t.Errorf("%s: got %v, want *cli.UsageError", tc.name, err)
 		}
+	}
+}
+
+func TestInteractiveSecretServerTargetErrorIsExplicit(t *testing.T) {
+	err := dispatch([]string{"--target", "ss", "token", "--interactive"})
+	if _, ok := errors.AsType[*cli.UsageError](err); !ok {
+		t.Fatalf("got %v, want *cli.UsageError", err)
+	}
+	if !strings.Contains(err.Error(), "only supported for the platform target") {
+		t.Errorf("got %q, want an explicit Platform-only diagnostic", err)
 	}
 }
 
