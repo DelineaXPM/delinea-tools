@@ -10,6 +10,11 @@ Each live test normally skips when a required fixture is absent. Set
 DELINEA_TOOLS_TEST_REQUIRE_E2E=1, or run make e2e-strict, to turn every missing
 fixture into a failure. The scheduled workflow uses strict mode.
 
+The scheduled/manual workflow runs the live suite serially on Ubuntu, macOS,
+and Windows. Overlapping workflow runs are queued, and the OS matrix permits
+only one runner at a time, so shared tenant fixtures are not exercised
+concurrently by this repository.
+
 Use throwaway test objects. Tests never print configured secret values, but the
 write cases create and delete folders or secrets beneath the configured folder.
 A cleanup is registered before each delete attempt.
