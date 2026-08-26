@@ -2,8 +2,8 @@ name: consumer-example
 
 # A runnable example of how a consuming repo uses delinea-util in CI to fetch a
 # secret from Delinea Secret Server, in the delivery shapes a pipeline uses.
-# It authenticates to the live test tenant through repository secrets, so it runs
-# on a schedule and on demand only — never on PRs (forks have no secrets).
+# It authenticates to the live test tenant through a main-restricted environment,
+# so it runs on a schedule and on demand only — never on PRs.
 #
 # The delivery jobs dogfood the CLI from source. The release-resolution job also
 # runs the exact command an external consumer uses, from outside the checkout:
@@ -21,11 +21,16 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: live-tests
+  cancel-in-progress: false
+
 jobs:
   # Confirm that the documented, immutable release resolves with its dependency
   # from a clean directory through normal public module resolution.
   release-resolution:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -41,6 +46,8 @@ jobs:
   # environment; it never touches $GITHUB_ENV, a later step, or disk.
   run-form:
     runs-on: ubuntu-latest
+    environment: live-tests
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -49,7 +56,7 @@ jobs:
           cache: false
       - name: inject a secret into one command
         # Scope the tenant credential to the one step that uses it. Checkout,
-        # setup-go, and unrelated steps never receive repository secrets.
+        # setup-go, and unrelated steps never receive environment secrets.
         env:
           DELINEA_TOOLS_URL: ${{ secrets.DELINEA_TOOLS_TEST_SS_URL }}
           DELINEA_TOOLS_USERNAME: ${{ secrets.DELINEA_TOOLS_TEST_SS_USERNAME }}
@@ -66,6 +73,8 @@ jobs:
   # step compares values and digests without printing either secret.
   github-env-form:
     runs-on: ubuntu-latest
+    environment: live-tests
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -108,6 +117,8 @@ jobs:
   # next step rather than installing the value in every later step's environment.
   github-output-form:
     runs-on: ubuntu-latest
+    environment: live-tests
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0

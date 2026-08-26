@@ -3,11 +3,13 @@ name: e2e
 # The live end-to-end suite is the only thing that catches Delinea changing an
 # API underneath us — the offline suite pins our own expected shapes and cannot.
 # It runs on a schedule (upstream can change with no commit here) and on demand,
-# against a throwaway test tenant supplied through repository secrets. Every
+# against a throwaway test tenant supplied through the live-tests environment.
+# That environment accepts only main, so a branch dispatch cannot receive its
+# credentials. Every
 # local and fork runs skip cleanly when fixtures are absent. This configured
 # scheduled job opts into strict mode (DELINEA_TOOLS_TEST_REQUIRE_E2E below), so
-# a deleted or misspelled repository secret fails the suite instead of silently
-# removing its coverage — the fixtures are provisioned as repository secrets.
+# a deleted or misspelled environment secret fails the suite instead of silently
+# removing its coverage.
 
 on:
   schedule:
@@ -18,11 +20,13 @@ permissions:
   contents: read
 
 concurrency:
-  group: live-e2e
+  group: live-tests
   cancel-in-progress: false
 
 jobs:
   e2e:
+    environment: live-tests
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       max-parallel: 1
@@ -37,7 +41,7 @@ jobs:
           cache: false
       - name: go test -tags e2e
         env:
-          # Strict mode: the DELINEA_TOOLS_TEST_* repository secrets are
+          # Strict mode: the DELINEA_TOOLS_TEST_* environment secrets are
           # provisioned, so a deleted or misspelled secret fails the suite
           # rather than silently skipping and dropping live coverage.
           DELINEA_TOOLS_TEST_REQUIRE_E2E: "1"

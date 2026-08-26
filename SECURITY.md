@@ -17,8 +17,9 @@ not merely asserted:
 - An offline test (`internal/supplychain`) requires exactly the reviewed
   `delinea-common v1.0.0` dependency and rejects additional, indirect,
   replacement, exclusion, or retraction directives.
-- CI verifies that `go.mod` and `go.sum` are tidy and that the resolved module
-  graph contains only delinea-tools and delinea-common.
+- CI verifies downloaded module content, checks that `go.mod` and `go.sum` are
+  tidy, and requires the resolved module graph to contain only delinea-tools
+  and delinea-common.
 
 The Go toolchain, standard library, and the pinned common module are the entire
 build and runtime dependency surface. CI runs a version-pinned
@@ -26,6 +27,7 @@ build and runtime dependency surface. CI runs a version-pinned
 push to `main` (`.github/workflows/ci.yml`), scanning with the minimum Go
 version in `go.mod`. A reachable standard-library vulnerability therefore
 keeps CI red until that minimum is advanced to a fixed release.
+CI also runs `staticcheck` over Go code and `actionlint` over every workflow.
 
 ## Supported toolchain and the version floor
 
