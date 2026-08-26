@@ -17,9 +17,6 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: ./.github/actions/setup-common
-        with:
-          deploy-key: ${{ secrets.DELINEA_COMMON_DEPLOY_KEY }}
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
@@ -49,9 +46,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: ./.github/actions/setup-common
-        with:
-          deploy-key: ${{ secrets.DELINEA_COMMON_DEPLOY_KEY }}
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
@@ -67,9 +61,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: ./.github/actions/setup-common
-        with:
-          deploy-key: ${{ secrets.DELINEA_COMMON_DEPLOY_KEY }}
       # govulncheck uses the go command on PATH as the standard-library version
       # under analysis. Scan the minimum version consumers may use, so a fixed
       # security release keeps this job red until go.mod advances to that release.
@@ -88,9 +79,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: ./.github/actions/setup-common
-        with:
-          deploy-key: ${{ secrets.DELINEA_COMMON_DEPLOY_KEY }}
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
