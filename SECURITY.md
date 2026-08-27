@@ -3,9 +3,11 @@
 ## Reporting a vulnerability
 
 Report suspected vulnerabilities privately — please do not open a public GitHub
-issue. Use the **Report issue** link in Delinea's
-[Responsible Disclosure](https://trust.delinea.com/) portal, or contact Delinea
-product security through your usual Delinea support channel.
+issue. Use this repository's
+[private vulnerability reporting form](https://github.com/DelineaXPM/delinea-tools/security/advisories/new),
+the **Report issue** link in Delinea's
+[Responsible Disclosure](https://trust.delinea.com/) portal, or your usual
+Delinea support channel.
 
 ## Supply chain
 
