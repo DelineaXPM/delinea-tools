@@ -91,6 +91,7 @@ and format validation are all-or-nothing: a failure emits no partial payload.
 - [CI integration](docs/CI.txt)
 - [Command feature inventory](docs/FEATURES.txt)
 - [Live E2E fixtures](docs/E2E.txt)
+- [Maintainer release procedure](RELEASING.md)
 - [Library packages and API contracts](https://github.com/DelineaXPM/delinea-common)
 - [Security policy](SECURITY.md)
 
