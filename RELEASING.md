@@ -13,11 +13,16 @@ other build artifacts to GitHub releases.
    attached assets.
 4. Verify the tag from a clean module cache before announcing the release.
 
-The workflow rejects prerelease syntax, an existing version, and any version
-that is lower than the latest release. Matching `v*` tags can be created only
-with a deploy key held by the `release` environment, which accepts `main` only.
-A separate rule blocks every actor, including that deploy key, from updating or
-deleting a release tag after creation.
+The workflow rejects prerelease syntax, a completed release, and any new
+version that is lower than the latest release. If tag creation succeeded but
+GitHub release creation did not, rerun the same version while `main` still
+identifies the tagged commit. The workflow reruns every gate, verifies the
+existing tag exactly, and completes publication without moving it.
+
+Matching `v*` tags can be created only with a deploy key held by the `release`
+environment, which accepts `main` only. A separate rule blocks every actor,
+including that deploy key, from updating or deleting a release tag after
+creation.
 
 Do not add another write-enabled deploy key without revisiting the tag-creation
 rule: GitHub rulesets grant their deploy-key bypass by actor type, not by an
