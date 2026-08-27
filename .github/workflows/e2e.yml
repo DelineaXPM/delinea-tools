@@ -12,6 +12,7 @@ name: e2e
 # removing its coverage.
 
 on:
+  workflow_call: {}
   schedule:
     - cron: "17 6 * * 1" # Mondays 06:17 UTC
   workflow_dispatch: {}

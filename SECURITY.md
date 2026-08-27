@@ -45,9 +45,12 @@ it within one week of a high- or critical-severity standard-library advisory.
 
 ## Installation provenance
 
-delinea-tools does not publish prebuilt binaries or release archives. Install a
-reviewed tag from source with the `go install` command in `README.md`; standard
-Go module resolution verifies public module content through the Go checksum
-database, and the Go tool embeds the selected module version in the resulting
-binary. The project does not currently publish signed artifacts, an SBOM, or a
-separate provenance attestation.
+delinea-tools does not publish prebuilt binaries or attach release artifacts.
+Install a reviewed tag from source with the `go install` command in `README.md`;
+standard Go module resolution verifies public module content through the Go
+checksum database, and the Go tool embeds the selected module version in the
+resulting binary. Stable tags are created only after the full CI and live E2E
+gates pass and are immutable after publication. GitHub releases contain notes
+and GitHub's automatic source snapshots only. The project does not currently
+publish signed artifacts, an SBOM, or a separate provenance attestation. See
+`RELEASING.md` for the maintainer procedure.
