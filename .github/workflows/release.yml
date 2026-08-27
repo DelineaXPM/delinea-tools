@@ -19,13 +19,17 @@ jobs:
   validate:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    outputs:
+      tag_exists: ${{ steps.request.outputs.tag_exists }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
       - name: validate release request
+        id: request
         env:
+          GH_TOKEN: ${{ github.token }}
           VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
@@ -38,9 +42,25 @@ jobs:
             exit 1
           fi
           if git show-ref --verify --quiet "refs/tags/$VERSION"; then
-            echo "Tag $VERSION already exists; release tags are immutable."
-            exit 1
+            tag_sha=$(git rev-parse "$VERSION^{commit}")
+            if [ "$tag_sha" != "$GITHUB_SHA" ]; then
+              echo "Tag $VERSION already identifies $tag_sha, not current main $GITHUB_SHA."
+              exit 1
+            fi
+
+            if release_error=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$VERSION" 2>&1 >/dev/null); then
+              echo "Release $VERSION already exists."
+              exit 1
+            elif [[ "$release_error" != *"(HTTP 404)"* ]]; then
+              echo "Could not determine whether release $VERSION exists."
+              exit 1
+            fi
+
+            echo "tag_exists=true" >> "$GITHUB_OUTPUT"
+            echo "Recovering publication for orphan tag $VERSION at $tag_sha."
+            exit 0
           fi
+          echo "tag_exists=false" >> "$GITHUB_OUTPUT"
           latest=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-version:refname | head -n 1)
           if [ -n "$latest" ] && [ "$(printf '%s\n%s\n' "$latest" "$VERSION" | sort -V | tail -n 1)" != "$VERSION" ]; then
             echo "Version $VERSION must be greater than the latest tag, $latest."
@@ -82,6 +102,7 @@ jobs:
             exit 1
           fi
       - name: create annotated release tag
+        if: needs.validate.outputs.tag_exists != 'true'
         env:
           RELEASE_DEPLOY_KEY: ${{ secrets.RELEASE_DEPLOY_KEY }}
           VERSION: ${{ inputs.version }}
@@ -112,5 +133,27 @@ jobs:
           VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          gh release create "$VERSION" --verify-tag --generate-notes --title "$VERSION"
+          published=false
+          for attempt in 1 2 3; do
+            if gh release create "$VERSION" --verify-tag --generate-notes --title "$VERSION"; then
+              published=true
+              break
+            fi
+            if gh release view "$VERSION" >/dev/null 2>&1; then
+              echo "Release $VERSION exists despite a lost create response."
+              published=true
+              break
+            fi
+            if [ "$attempt" -lt 3 ]; then
+              sleep $((attempt * 5))
+            fi
+          done
+          if [ "$published" != true ]; then
+            echo "Could not publish release $VERSION after three attempts; rerun this workflow to recover."
+            exit 1
+          fi
+
+          test "$(gh release view "$VERSION" --json tagName --jq .tagName)" = "$VERSION"
+          test "$(gh release view "$VERSION" --json isDraft --jq .isDraft)" = false
+          test "$(gh release view "$VERSION" --json isPrerelease --jq .isPrerelease)" = false
           test "$(gh release view "$VERSION" --json assets --jq '.assets | length')" -eq 0
